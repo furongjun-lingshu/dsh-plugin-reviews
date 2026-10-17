@@ -23,6 +23,10 @@ interface Row {
   revision_number: number;
   plugin_version: string;
   dsh_version: string;
+  /** 五状态判定（dsh-bench 规范）：历史修订可为 null。 */
+  verdict: string | null;
+  /** 证据链 JSON 文本（[{url, note}]）：历史修订可为 null。 */
+  evidence_refs: string | null;
   first_published_at: number | null;
   public_updated_at: number | null;
 }
@@ -47,7 +51,7 @@ export async function GET(
       .prepare(
         `SELECT r.id AS review_id, r.plugin_id, r.source_kind, u.nickname AS author_nickname,
                 rev.title, rev.body_markdown, rev.id AS revision_id, rev.revision_number,
-                rev.plugin_version, rev.dsh_version,
+                rev.plugin_version, rev.dsh_version, rev.verdict, rev.evidence_refs,
                 ce.first_published_at, ce.public_updated_at
            FROM reviews r
            JOIN content_entities ce ON ce.id = r.id
@@ -70,6 +74,9 @@ export async function GET(
         revisionNumber: row.revision_number,
         pluginVersion: JSON.parse(row.plugin_version) as unknown,
         dshVersion: JSON.parse(row.dsh_version) as unknown,
+        // 判定与证据链（dsh-bench 规范）：null = 该修订没有给出，不补写。
+        verdict: row.verdict,
+        evidenceRefs: row.evidence_refs ? (JSON.parse(row.evidence_refs) as unknown) : null,
         authorNickname: row.author_nickname,
         firstPublishedAt: row.first_published_at === null ? null : new Date(row.first_published_at).toISOString(),
         publicUpdatedAt: row.public_updated_at === null ? null : new Date(row.public_updated_at).toISOString(),

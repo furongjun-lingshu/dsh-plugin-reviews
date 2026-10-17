@@ -154,6 +154,9 @@ const submitted = sendJson('PATCH', '/api/drafts', {
   bodyMarkdown: BODY,
   pluginVersion: { kind: 'unknown' },
   dshVersion: { kind: 'unknown' },
+  // 五状态判定 + 证据链（dsh-bench 规范）：publish 提交必填；有结论的判定带证据。
+  verdict: 'helpful',
+  evidenceRefs: [{ url: 'https://example.com/acceptance/evidence', note: '验收链证据' }],
 });
 check('提交成功', submitted.ok === true && !!submitted.data?.submissionId, JSON.stringify(submitted.data ?? submitted.error));
 const submissionId = submitted.data?.submissionId;

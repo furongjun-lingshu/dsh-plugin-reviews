@@ -182,6 +182,9 @@ describe('端到端：登录 → 收录插件 → 写评测 → 提交 → 审�
       expectedSaveVersion: confirmedVersion,
       requestKey: 'rk-submit-1',
       publishIntent: 'publish',
+      // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+      verdict: 'helpful',
+      evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
       title: reloaded.payload.title,
       bodyMarkdown: '## 用它做什么\n\n整理文献。',
       pluginVersion: reloaded.payload.pluginVersion,
@@ -452,6 +455,9 @@ describe('端到端：发布资格不能被绕过', () => {
       expectedSaveVersion: saved.saveVersion,
       requestKey: 'rk-sub-2',
       publishIntent: 'publish',
+      // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+      verdict: 'helpful',
+      evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
       title: '标题',
       bodyMarkdown: '正文',
       pluginVersion: { kind: 'unknown' },
@@ -509,6 +515,9 @@ describe('端到端：发布资格不能被绕过', () => {
       expectedSaveVersion: saved.saveVersion,
       requestKey: 'rk-sub-3',
       publishIntent: 'publish',
+      // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+      verdict: 'helpful',
+      evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
       title: '待撤回的评测',
       bodyMarkdown: '正文',
       pluginVersion: { kind: 'unknown' },

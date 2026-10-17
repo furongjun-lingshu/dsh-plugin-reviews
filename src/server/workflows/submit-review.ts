@@ -17,6 +17,7 @@ import type { CallerContext } from '@/server/platform/context';
 import { assertCanWrite } from '@/server/platform/context';
 import { err } from '@/packages/common/errors';
 import type { VersionValue } from '@/packages/common/field-rules';
+import { parseEvidenceRefs, parseVerdict, verdictDef, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
 
 // ============================================================
 // 完整发布校验（架构第 66.2 节）
@@ -78,6 +79,13 @@ export interface SubmitReviewInput {
   bodyMarkdown: string;
   pluginVersion: VersionValue;
   dshVersion: VersionValue;
+  /**
+   * 五状态判定（dsh-bench 规范）。`publish` 意图必填；`draft_only` 可为 null。
+   * 校验与规范化在本函数内完成（parseVerdict/parseEvidenceRefs fail-closed）。
+   */
+  verdict?: string | null;
+  /** 证据链（[{url, note?}]）。有结论的判定至少一条；draft_only 不收。 */
+  evidenceRefs?: unknown;
 }
 
 export interface SubmitReviewResult {
@@ -95,6 +103,8 @@ export function submissionDigest(input: {
   expectedSaveVersion: number;
   title: string;
   bodyMarkdown: string;
+  verdict: string | null;
+  evidenceRefs: EvidenceRef[];
 }): string {
   return digest(input);
 }
@@ -135,11 +145,22 @@ export async function submitReview(
     | { id: string; request_digest: string; review_revision_id: string | null }
     | undefined;
 
+  // 五状态判定与证据链（dsh-bench 规范）：publish 意图必须给出；draft_only 不收。
+  // 校验放在事务外：非法输入不进入任何写路径（fail-closed）。
+  const verdict: VerdictKey | null =
+    input.publishIntent === 'publish' ? parseVerdict(input.verdict) : null;
+  const evidenceRefs: EvidenceRef[] =
+    verdict === null
+      ? []
+      : parseEvidenceRefs(input.evidenceRefs, { required: verdictDef(verdict).conclusive });
+
   const wantDigest = submissionDigest({
     draftId: input.draftId,
     expectedSaveVersion: input.expectedSaveVersion,
     title: input.title,
     bodyMarkdown: input.bodyMarkdown,
+    verdict,
+    evidenceRefs,
   });
 
   if (existing) {
@@ -193,8 +214,8 @@ export async function submitReview(
     tx.db
       .prepare(
         `INSERT INTO review_revisions
-           (id, review_id, revision_number, plugin_id, title, body_markdown, plugin_version, dsh_version, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, review_id, revision_number, plugin_id, title, body_markdown, plugin_version, dsh_version, verdict, evidence_refs, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         revisionId,
@@ -205,6 +226,8 @@ export async function submitReview(
         input.bodyMarkdown,
         JSON.stringify(input.pluginVersion),
         JSON.stringify(input.dshVersion),
+        verdict,
+        evidenceRefs.length > 0 ? JSON.stringify(evidenceRefs) : null,
         now,
       );
 

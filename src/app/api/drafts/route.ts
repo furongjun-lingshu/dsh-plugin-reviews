@@ -30,6 +30,10 @@ interface EditBody {
   bodyMarkdown?: unknown;
   expectedVersion?: unknown;
   expectedSaveVersion?: unknown;
+  /** 五状态判定（dsh-bench 规范）：PATCH 提交时原样透传，校验在 submitReview 内。 */
+  verdict?: unknown;
+  /** 证据链（[{url, note?}]）：同上。 */
+  evidenceRefs?: unknown;
 }
 
 function requireString(v: unknown, path: string): string {
@@ -116,6 +120,10 @@ export async function PATCH(request: Request): Promise<Response> {
         bodyMarkdown: typeof body.bodyMarkdown === 'string' ? body.bodyMarkdown : '',
         pluginVersion: (body.pluginVersion ?? { kind: 'unknown' }) as VersionValue,
         dshVersion: (body.dshVersion ?? { kind: 'unknown' }) as VersionValue,
+        // 五状态判定与证据链（dsh-bench 规范）：非字符串一律按「未给出」传 null
+        // （同 draftPayloadOf 的口径），合法性校验在 submitReview 内 fail-closed。
+        verdict: typeof body.verdict === 'string' ? body.verdict : null,
+        evidenceRefs: body.evidenceRefs,
       },
       getDb(),
     );

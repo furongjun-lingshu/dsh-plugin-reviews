@@ -123,6 +123,9 @@ describe('人工审核决定：通过之后必须真的有人去发布', () => {
         expectedSaveVersion: 1,
         requestKey: `sub-${newId()}`,
         publishIntent: 'publish',
+        // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+        verdict: 'helpful',
+        evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
         title: '一篇实测评测',
         bodyMarkdown: GOOD_BODY,
         pluginVersion: { kind: 'unknown' },
@@ -196,6 +199,9 @@ describe('人工审核决定：通过之后必须真的有人去发布', () => {
         expectedSaveVersion: 1,
         requestKey: `sub-${newId()}`,
         publishIntent: 'publish',
+        // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+        verdict: 'helpful',
+        evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
         title: '一篇实测评测',
         bodyMarkdown: GOOD_BODY,
         pluginVersion: { kind: 'unknown' },
@@ -243,6 +249,9 @@ describe('人工审核决定：通过之后必须真的有人去发布', () => {
         expectedSaveVersion: 1,
         requestKey: `sub-${newId()}`,
         publishIntent: 'publish',
+        // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+        verdict: 'helpful',
+        evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
         title: '一篇实测评测',
         bodyMarkdown: GOOD_BODY,
         pluginVersion: { kind: 'unknown' },
@@ -288,6 +297,9 @@ describe('人工审核决定：通过之后必须真的有人去发布', () => {
         expectedSaveVersion: 1,
         requestKey: `sub-${newId()}`,
         publishIntent: 'publish',
+        // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+        verdict: 'helpful',
+        evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
         title: '一篇实测评测',
         bodyMarkdown: GOOD_BODY,
         pluginVersion: { kind: 'unknown' },
@@ -329,6 +341,9 @@ describe('人工审核决定：通过之后必须真的有人去发布', () => {
         expectedSaveVersion: 1,
         requestKey: `sub-${newId()}`,
         publishIntent: 'publish',
+        // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
+        verdict: 'helpful',
+        evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
         title: '一篇实测评测',
         bodyMarkdown: GOOD_BODY,
         pluginVersion: { kind: 'unknown' },

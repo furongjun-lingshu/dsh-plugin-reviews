@@ -9,6 +9,7 @@ import { notFound } from 'next/navigation';
 import { getDb } from '@/server/platform/db';
 import { resolveVisibilityInTx } from '@/server/modules/content';
 import { formatVersionLabel } from '@/packages/common/status-text';
+import { DomainError, ErrorCodes } from '@/packages/common/errors';
 import { renderArticleMarkdown } from '@/server/platform/markdown';
 import { currentContext } from '@/app/api/_lib/context';
 import { isAdmin } from '@/server/platform/context';
@@ -20,6 +21,7 @@ import { AdminHideForm } from '@/components/admin-hide-form';
 import { BackLink } from '@/components/back-link';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { formatDateTime } from '@/packages/common/time';
+import { isVerdictKey, parseEvidenceRefs, verdictDef, type EvidenceRef } from '@/packages/common/verdict';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +37,10 @@ interface Row {
   author_id: string;
   first_published_at: number | null;
   public_updated_at: number | null;
+  /** 五状态判定（dsh-bench 规范）；历史修订可能为 null。 */
+  verdict: string | null;
+  /** 证据链 JSON 文本（[{url, note}]）；历史修订可能为 null。 */
+  evidence_refs: string | null;
 }
 
 export default async function ReviewDetailPage({ params }: { params: Promise<{ reviewId: string }> }) {
@@ -44,7 +50,15 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
   // 作者视角需要"这是不是我的文章"；服务端已经解析过会话，这里只读不多查库。
   const ctx = await currentContext();
 
-  const vis = resolveVisibilityInTx(db, reviewId);
+  // 不存在的评测走 404 页，而不是把 DomainError 漏成 500（外部实测 2026-10-17：
+  // /reviews/<未知ID> 与 /reviews/<非UUID> 均渲染 500 + digest，而 /plugins/<未知> 是 404）。
+  let vis;
+  try {
+    vis = resolveVisibilityInTx(db, reviewId);
+  } catch (error) {
+    if (error instanceof DomainError && error.code === ErrorCodes.TARGET_UNAVAILABLE) notFound();
+    throw error;
+  }
   if (!vis.publiclyVisible) {
     return (
       <div>
@@ -76,7 +90,8 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
   const row = db
     .prepare(
       `SELECT r.id AS review_id, r.plugin_id, r.source_kind, rev.title, rev.body_markdown,
-              rev.plugin_version, rev.dsh_version, u.nickname AS author_nickname, ce.author_id,
+              rev.plugin_version, rev.dsh_version, rev.verdict, rev.evidence_refs,
+              u.nickname AS author_nickname, ce.author_id,
               ce.first_published_at, ce.public_updated_at
          FROM reviews r
          JOIN content_entities ce ON ce.id = r.id
@@ -89,6 +104,16 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
 
   const pluginVersion = JSON.parse(row.plugin_version) as VersionValue;
   const dshVersion = JSON.parse(row.dsh_version) as VersionValue;
+  // 判定与证据：老修订没有 → 如实显示「未给出」，不补写（规范：未测就写未测）。
+  const verdictKey = isVerdictKey(row.verdict) ? row.verdict : null;
+  let evidenceRefs: EvidenceRef[] = [];
+  if (row.evidence_refs) {
+    try {
+      evidenceRefs = parseEvidenceRefs(JSON.parse(row.evidence_refs), { required: false });
+    } catch {
+      evidenceRefs = [];
+    }
+  }
 
   // 正文经统一管线渲染并净化。HTML 只是展示结果，Markdown 原文才是权威内容。
   // 正文与目录一次渲染出来：标题的锚点 id 由服务端生成（目录链接不依赖 JS）。
@@ -124,7 +149,28 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
           3. 正文框 —— 正文被包进一张卡片里，与标题层分开，读起来边界清楚。
       */}
       <article className="article-shell">
-        {/* 头图与标题在**同一张卡**里（主人：融合成一个完整的圆角，不要再让标题浮在图上） */}
+        {evidenceRefs.length > 0 || (verdictKey && verdictDef(verdictKey).conclusive) ? (
+          <section className="panel" style={{ margin: '0 0 16px' }} aria-label="证据链">
+            <h2 style={{ fontSize: 15, margin: '0 0 8px' }}>证据链</h2>
+            {evidenceRefs.length > 0 ? (
+              <ol style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.7 }}>
+                {evidenceRefs.map((item) => (
+                  <li key={item.url}>
+                    <a href={item.url} target="_blank" rel="noreferrer noopener">
+                      {item.url}
+                    </a>
+                    {item.note ? <span className="muted">——{item.note}</span> : null}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                这个判定没有附证据链——按规范，有结论的判定应当能复核；缺证据时请按「还说不准」理解。
+              </p>
+            )}
+          </section>
+        ) : null}
+        {/* 头图与标题在**同一张卡**里（主人：融合成一个完整的圆角，不要再让标题浮在图上）*/}
         <div className="article-hero-card">
           <ArticleHero seed={row.review_id} />
 
@@ -137,6 +183,13 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
               <span>{formatVersionLabel('插件', pluginVersion)}</span>
               <span>{formatVersionLabel('DSH', dshVersion)}</span>
               <span>{row.author_nickname}</span>
+              {verdictKey ? (
+                <span className="tag verdict-badge" title="五状态判定（dsh-bench 测评规范）">
+                  {verdictDef(verdictKey).label}
+                </span>
+              ) : (
+                <span className="tag" title="这份修订没有给出判定">未给出判定</span>
+              )}
             </div>
           </header>
         </div>

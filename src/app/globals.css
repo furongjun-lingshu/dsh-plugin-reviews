@@ -1803,6 +1803,13 @@ aside h2 {
 /* ---------------------------------------------------------------- chip（.tag）
    M3 chip 默认高 32dp；主人要求整体小一档 → 尺寸走 :root 的 --chip-* 标准值。
    仍是 M3 chip 的语言：small(8) 圆角、outline 描边；选中的筛选 chip 用 secondary-container。 */
+/* 五状态判定徽章（dsh-bench 规范）：主色描边 + 加粗，和普通标签区分。颜色只走令牌。 */
+.verdict-badge {
+  font-weight: 600;
+  color: var(--md-sys-color-primary);
+  border-color: var(--md-sys-color-primary);
+}
+
 .tag {
   display: inline-flex;
   align-items: center;

@@ -19,6 +19,7 @@ import { err } from '@/packages/common/errors';
 import type { PageRequest, PageResult } from '@/packages/common/result';
 import { buildPage } from '@/packages/common/result';
 import { isSha256Hex, isUuidV7, type ContentType, type VersionValue } from '@/packages/common/field-rules';
+import { parseEvidenceRefs, parseVerdict, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
 
 // ============================================================
 // 结构：草稿载荷
@@ -45,9 +46,21 @@ export interface DraftPayload {
   dshVersion: VersionValue;
   /** 正文分段。 */
   body: DraftBodySegment[];
+  /**
+   * 五状态判定（dsh-bench 规范）：未选为 null，提交时必填。
+   * 可选是因为 v1 载荷（本字段之前写入的历史草稿）没有这个键——
+   * 运行时由 parseDraftPayload 规范化为 null / []，读取方用「未给出」呈现。
+   */
+  verdict?: VerdictKey | null;
+  /** 证据链（可复核链接）；未填为空数组（v1 载荷缺键，同 verdict 的可选理由）。 */
+  evidence?: EvidenceRef[];
 }
 
-export const DRAFT_PAYLOAD_SCHEMA_VERSION = 1;
+/**
+ * v2：载荷增补 verdict/evidence。解析对旧载荷（缺这两个键）向后兼容——
+ * 缺键视为「未给出」（null / []），不报错（历史草稿不因升级而读不出来）。
+ */
+export const DRAFT_PAYLOAD_SCHEMA_VERSION = 2;
 
 // ============================================================
 // 结构：视图
@@ -296,12 +309,21 @@ export function parseDraftPayload(raw: unknown): DraftPayload {
     return { key: seg.key, markdown: seg.markdown };
   });
 
+  // v1 兼容：旧载荷没有 verdict/evidence —— 缺键 = 未给出（null / []）。
+  let verdict: VerdictKey | null = null;
+  if (obj.verdict !== undefined && obj.verdict !== null) {
+    verdict = parseVerdict(obj.verdict, 'payload.verdict');
+  }
+  const evidence = parseEvidenceRefs(obj.evidence, { required: false, path: 'payload.evidence' });
+
   return {
     title: obj.title,
     pluginId: obj.pluginId as string | null,
     pluginVersion: parseVersionValue(obj.pluginVersion, 'payload.pluginVersion'),
     dshVersion: parseVersionValue(obj.dshVersion, 'payload.dshVersion'),
     body,
+    verdict,
+    evidence,
   };
 }
 
@@ -362,6 +384,8 @@ export const reviewsService = {
         pluginVersion: { kind: 'unknown' },
         dshVersion: { kind: 'unknown' },
         body: [],
+        verdict: null,
+        evidence: [],
       };
 
       // 延迟配对：先插公共实体（回指自身），再插具体子表，最后落草稿；全部在同一事务内。

@@ -22,6 +22,7 @@ import {
   inputStyle,
   newRequestKey,
 } from './api-client';
+import { VERDICTS, verdictDef, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
 
 type VersionValue = { kind: 'unknown' } | { kind: 'known'; value: string };
 
@@ -31,6 +32,9 @@ interface DraftPayload {
   pluginVersion: VersionValue;
   dshVersion: VersionValue;
   body: { key: string; markdown: string }[];
+  /** v1 载荷没有这两项（可选）：读取方按「未给出」呈现。 */
+  verdict?: VerdictKey | null;
+  evidence?: EvidenceRef[];
 }
 
 interface DraftView {
@@ -83,6 +87,29 @@ interface PendingAttachment {
 
 const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 证据文本 ↔ 证据数组。每行一条：`链接` 或 `链接 | 备注`。
+ * 空行忽略；解析不清的行原样保留成 [url, note]=[行, null] 交给服务端校验拒绝——
+ * 客户端不替服务端猜「你想写的是什么」。
+ */
+function parseEvidenceText(text: string): EvidenceRef[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const pipe = line.indexOf('|');
+      if (pipe === -1) return { url: line, note: null };
+      const url = line.slice(0, pipe).trim();
+      const note = line.slice(pipe + 1).trim();
+      return { url, note: note.length > 0 ? note : null };
+    });
+}
+
+function formatEvidenceText(evidence: EvidenceRef[]): string {
+  return evidence.map((item) => (item.note ? `${item.url} | ${item.note}` : item.url)).join('\n');
+}
 
 /** 把 markdown 全文拆成 body 数组：按空行分段，保证每段有稳定 key。 */
 function toBodySegments(markdown: string): { key: string; markdown: string }[] {
@@ -143,6 +170,9 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
   const [bodyMarkdown, setBodyMarkdown] = useState('');
   const [pluginVersion, setPluginVersion] = useState<VersionValue>({ kind: 'unknown' });
   const [dshVersion, setDshVersion] = useState<VersionValue>({ kind: 'unknown' });
+  // 五状态判定与证据链（dsh-bench 规范）：随保存进草稿，随提交进快照。
+  const [verdict, setVerdict] = useState<VerdictKey | null>(null);
+  const [evidenceText, setEvidenceText] = useState('');
   const [saveVersion, setSaveVersion] = useState(0);
 
   const [error, setError] = useState<ApiError | null>(null);
@@ -165,6 +195,9 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
       setBodyMarkdown(data.payload.body.map((s) => s.markdown).join('\n\n'));
       setPluginVersion(data.payload.pluginVersion);
       setDshVersion(data.payload.dshVersion);
+      // 旧草稿（v1 载荷）没有这两项：按「未给出」还原，不伪造。
+      setVerdict(data.payload.verdict ?? null);
+      setEvidenceText(formatEvidenceText(data.payload.evidence ?? []));
       setSaveVersion(data.saveVersion);
       setError(null);
     } catch (e) {
@@ -195,6 +228,8 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
         pluginVersion,
         dshVersion,
         body: toBodySegments(bodyMarkdown),
+        verdict,
+        evidence: parseEvidenceText(evidenceText),
       },
     });
     setSaveVersion(result.saveVersion);
@@ -234,6 +269,9 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
       const freshVersion = await doSave();
       if (freshVersion === null) return;
 
+      if (verdict === null) {
+        throw { code: 'input_invalid', message: '提交前请先给出判定（五状态之一）。' } as ApiError;
+      }
       const result = await apiFetch<SubmitResult>('/api/drafts', {
         method: 'PATCH',
         json: {
@@ -244,6 +282,8 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
           bodyMarkdown,
           pluginVersion,
           dshVersion,
+          verdict,
+          evidenceRefs: parseEvidenceText(evidenceText),
         },
       });
       setSubmission(result);
@@ -506,6 +546,46 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
             rows={18}
             placeholder={'支持 Markdown。\n\n用「插入图片」可上传 PNG/JPEG/WebP（≤10MB），成功后会把图片语法插到光标处。'}
             style={{ ...inputStyle, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 14, lineHeight: 1.6 }}
+          />
+        </div>
+
+        <div className="panel">
+          <h2 style={{ fontSize: 16, marginTop: 0 }}>结论</h2>
+          <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+            一篇评测只给一个判定（对齐 dsh-bench 测评规范：五状态、不给总分、不用星级）。
+            「真有用／帮倒忙／没啥差别」必须附证据链；「还说不准／没法测」可以没有。
+          </p>
+          {VERDICTS.map((v) => (
+            <label
+              key={v.key}
+              style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginRight: 14, marginBottom: 8, fontSize: 14 }}
+            >
+              <input
+                type="radio"
+                name="verdict"
+                checked={verdict === v.key}
+                onChange={() => setVerdict(v.key)}
+              />
+              {v.label}
+              {v.conclusive ? <span className="muted" style={{ fontSize: 12 }}>（需证据）</span> : null}
+            </label>
+          ))}
+          {verdict !== null ? (
+            <p className="muted" style={{ fontSize: 13, margin: '4px 0 8px' }}>
+              当前判定：{verdictDef(verdict).label}
+              {verdictDef(verdict).conclusive ? '——请附至少一条可复核链接。' : '——证据可选。'}
+            </p>
+          ) : null}
+          <label htmlFor="evidence" style={{ display: 'block', fontWeight: 600, margin: '10px 0 6px' }}>
+            证据链（每行一条：链接 或 链接 | 备注）
+          </label>
+          <textarea
+            id="evidence"
+            value={evidenceText}
+            onChange={(e) => setEvidenceText(e.target.value)}
+            rows={4}
+            placeholder={'https://github.com/.../compare/a...b | 配对 A/B 前后各 5 次读数\nhttps://.../issues/12#issuecomment-... | 复现步骤'}
+            style={{ ...inputStyle, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 13 }}
           />
         </div>
 
