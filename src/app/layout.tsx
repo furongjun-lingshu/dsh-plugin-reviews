@@ -10,6 +10,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { SessionNav } from '@/components/session-nav';
+import { BambooBackdrop } from '@/components/bamboo-backdrop';
 import { ReadingProgress } from '@/components/reading-progress';
 import { MotionRuntime } from '@/components/motion-runtime';
 import { BackToTop } from '@/components/back-to-top';
@@ -26,7 +27,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="zh-CN">
       <head>
-        <meta name="theme-color" content="#111318" />
+        <meta name="theme-color" content="#f6f8f1" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
@@ -35,6 +36,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
+        {/* 竹叶感背景装饰：固定底层，永远不挡点击（古风纸面肌理 + 轻量飘叶） */}
+        <BambooBackdrop />
         <a className="skip" href="#main-content">
           跳至主内容
         </a>
