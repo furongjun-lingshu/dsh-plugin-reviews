@@ -9,6 +9,7 @@ import { notFound } from 'next/navigation';
 import { getDb } from '@/server/platform/db';
 import { resolveVisibilityInTx } from '@/server/modules/content';
 import { formatVersionLabel } from '@/packages/common/status-text';
+import { DomainError, ErrorCodes } from '@/packages/common/errors';
 import { renderArticleMarkdown } from '@/server/platform/markdown';
 import { currentContext } from '@/app/api/_lib/context';
 import { isAdmin } from '@/server/platform/context';
@@ -44,7 +45,15 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
   // 作者视角需要"这是不是我的文章"；服务端已经解析过会话，这里只读不多查库。
   const ctx = await currentContext();
 
-  const vis = resolveVisibilityInTx(db, reviewId);
+  // 不存在的评测走 404 页，而不是把 DomainError 漏成 500（外部实测 2026-10-17：
+  // /reviews/<未知ID> 与 /reviews/<非UUID> 均渲染 500 + digest，而 /plugins/<未知> 是 404）。
+  let vis;
+  try {
+    vis = resolveVisibilityInTx(db, reviewId);
+  } catch (error) {
+    if (error instanceof DomainError && error.code === ErrorCodes.TARGET_UNAVAILABLE) notFound();
+    throw error;
+  }
   if (!vis.publiclyVisible) {
     return (
       <div>
