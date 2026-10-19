@@ -17,6 +17,8 @@ import { clearSessionCookie, readSessionToken } from '@/server/platform/session-
 import { createGithubLoginAdapter } from '@/server/adapters/login';
 import { currentContext, okJson, errorResponse, requestMeta } from '../_lib/context';
 import { testLoginAllowed } from '@/server/platform/test-login';
+import { isSuperAdmin } from '@/server/platform/context';
+import { configuredSuperAdminId, describeSuperAdminConfig } from '@/server/modules/identity/super-admin';
 
 export const runtime = 'nodejs';
 
@@ -51,6 +53,15 @@ export async function GET(request: Request): Promise<Response> {
         githubLoginConfigured: githubConfigured,
         // 诊断字段：让本地能一眼看出测试通道开关是否生效（不含任何秘密）。
         testLoginEnabled: testLoginAllowed(),
+        /** 当前登录者是不是**部署绑定的超级管理员**（未登录恒 false）。 */
+        isSuperAdmin: isSuperAdmin(ctx),
+        /** 超级管理员是否已在部署配置里绑定；未绑定时站内没人能授予管理员。 */
+        superAdminConfigured: describeSuperAdminConfig().problem === null && configuredSuperAdminId() !== null,
+        /**
+         * **仅开发通道打开时**下发：用哪个身份走测试登录就能成为超级管理员。
+         * 生产恒为 null —— 不泄露"该盯哪个账号"，测试登录本身在生产也是关的。
+         */
+        testSuperAdminIdentity: testLoginAllowed() ? configuredSuperAdminId() : null,
       },
       requestId,
     );

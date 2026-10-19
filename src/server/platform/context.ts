@@ -12,9 +12,17 @@ export interface CallerContext {
   userId: string | null;
   role: 'user' | 'admin' | null;
   accountStatus: 'active' | 'disabled' | null;
+  /**
+   * 是否**部署绑定的超级管理员**（见 `identity/super-admin.ts`）。
+   * 它不是数据库里的第三种角色：role 仍是 user/admin，超管由部署配置唯一决定。
+   *
+   * 可选字段，**缺省视为 false**（fail-closed）：漏填只会更严，不会更松。
+   * 权威判定在服务层（每次都查库 + 比对部署配置），这个字段只用于接口层与界面。
+   */
+  isSuperAdmin?: boolean;
 }
 
-export const anonymousContext: CallerContext = { userId: null, role: null, accountStatus: null };
+export const anonymousContext: CallerContext = { userId: null, role: null, accountStatus: null, isSuperAdmin: false };
 
 export function isAuthenticated(ctx: CallerContext): boolean {
   return ctx.userId !== null;
@@ -49,6 +57,25 @@ export function assertCanAdmin(
   assertCanWrite(ctx);
   if (ctx.role !== 'admin') {
     throw err.forbidden('该操作需要管理员权限。');
+  }
+}
+
+/**
+ * 超级管理员判定：必须是"在任管理员"**且**身份等于部署配置绑定的那个人。
+ * 未配置 `SUPER_ADMIN_GITHUB_ID` 时**没有任何人是超管**（fail-closed）——
+ * 此时站内谁都授予不了管理员，而不是退化成"谁都能提权"。
+ */
+export function isSuperAdmin(ctx: CallerContext): boolean {
+  return ctx.userId !== null && ctx.isSuperAdmin === true && ctx.accountStatus === 'active';
+}
+
+/** 超级管理员专属操作前置校验（授予/撤销管理员）。 */
+export function assertCanSuperAdmin(
+  ctx: CallerContext,
+): asserts ctx is CallerContext & { userId: string; role: 'admin'; accountStatus: 'active'; isSuperAdmin: true } {
+  assertCanAdmin(ctx);
+  if (ctx.isSuperAdmin !== true) {
+    throw err.forbidden('该操作需要超级管理员权限：只有部署绑定的超级管理员能授予或撤销管理员。');
   }
 }
 

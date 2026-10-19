@@ -19,6 +19,8 @@ export function SignInMenu({
   busy,
   onTestLogin,
   onTestAdminLogin,
+  onTestSuperAdminLogin,
+  superAdminIdentity,
 }: {
   githubConfigured: boolean;
   testLoginEnabled: boolean;
@@ -26,6 +28,10 @@ export function SignInMenu({
   onTestLogin: () => void;
   /** 以固定的**管理员测试身份**登录（该身份是否真为管理员，取决于运维是否已授权）。 */
   onTestAdminLogin: () => void;
+  /** **仅开发**：以部署绑定的超级管理员身份登录（identity 由服务端下发）。 */
+  onTestSuperAdminLogin: () => void;
+  /** 为空表示部署没配 SUPER_ADMIN_GITHUB_ID，此时不显示这一行。 */
+  superAdminIdentity: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -104,6 +110,20 @@ export function SignInMenu({
               >
                 <span className="menu-row-label">{busy ? '登录中…' : '测试登录（开发）· 管理员'}</span>
               </button>
+              {superAdminIdentity !== null ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="menu-row"
+                  disabled={busy}
+                  onClick={() => {
+                    setOpen(false);
+                    onTestSuperAdminLogin();
+                  }}
+                >
+                  <span className="menu-row-label">{busy ? '登录中…' : '测试登录（开发）· 超级管理员'}</span>
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>

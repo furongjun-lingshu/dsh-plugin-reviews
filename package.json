@@ -16,7 +16,7 @@
     "worker": "tsx src/worker/main.ts",
     "db:migrate": "tsx src/server/platform/migrate-cli.ts",
     "db:check": "tsx src/server/platform/selfcheck-cli.ts",
-    "admin:grant": "node scripts/grant-admin.mjs",
+    "admin:super": "node scripts/set-super-admin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

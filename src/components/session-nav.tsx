@@ -33,6 +33,16 @@ interface SessionData {
   accountStatus?: 'active' | 'disabled' | null;
   githubLoginConfigured: boolean;
   testLoginEnabled: boolean;
+  /** 是否部署绑定的超级管理员（详见 server/modules/identity/super-admin.ts）。 */
+  isSuperAdmin?: boolean;
+  /** **仅开发**：测试登录想成为超级管理员时该用哪个身份；生产恒为 null。 */
+  testSuperAdminIdentity?: string | null;
+}
+
+/** 角色文案：超级管理员 > 管理员 > 普通用户。 */
+function roleLabel(session: SessionData): string {
+  if (session.isSuperAdmin === true) return '超级管理员';
+  return session.role === 'admin' ? '管理员' : '普通用户';
 }
 
 export function SessionNav() {
@@ -73,18 +83,20 @@ export function SessionNav() {
    *
    * `asAdmin` 走另一个**固定测试身份** `local-admin`。注意管理员**不能**靠登录产生：
    * 站内没有任何自提权入口（这是刻意的），所以这个身份需要运维先用
-   * `node scripts/grant-admin.mjs --github-login local-admin` 授予一次管理员。
+   * `node scripts/set-super-admin.mjs --bootstrap` 授予一次管理员。
    * 没授予时它就是一个普通用户 —— 界面如实反映，不做隐式提权。
    */
-  const signInForTest = async (asAdmin = false) => {
+  const signInForTest = async (identity: 'user' | 'admin' | 'super' = 'user') => {
     setBusy(true);
     try {
-      await apiFetch('/api/testing/session', {
-        method: 'POST',
-        json: asAdmin
-          ? { providerUserId: 'local-admin', providerUsername: 'local-admin', displayName: '本地管理员' }
-          : { providerUserId: 'local-dev-user', providerUsername: 'local-dev' },
-      });
+      const superIdentity = session?.testSuperAdminIdentity ?? null;
+      const json =
+        identity === 'super' && superIdentity !== null
+          ? { providerUserId: superIdentity, providerUsername: superIdentity, displayName: '超级管理员' }
+          : identity === 'admin'
+            ? { providerUserId: 'local-admin', providerUsername: 'local-admin', displayName: '本地管理员' }
+            : { providerUserId: 'local-dev-user', providerUsername: 'local-dev' };
+      await apiFetch('/api/testing/session', { method: 'POST', json });
       await loadSession();
     } catch (e) {
       setError(e as ApiError);
@@ -135,10 +147,8 @@ export function SessionNav() {
               subtitle={
                 /* 只留角色；"会话进行中"这类过程性描述按主人要求去掉，禁用状态仍然如实说明 */
                 session.accountStatus === 'disabled'
-                  ? `${session.role === 'admin' ? '管理员' : '普通用户'} · 账户已禁用`
-                  : session.role === 'admin'
-                    ? '管理员'
-                    : '普通用户'
+                  ? `${roleLabel(session)} · 账户已禁用`
+                  : roleLabel(session)
               }
               initial={(session.nickname ?? session.userId ?? '?').slice(0, 1).toUpperCase()}
               title={`账户 ${session.userId}`}
@@ -154,7 +164,9 @@ export function SessionNav() {
               testLoginEnabled={session.testLoginEnabled}
               busy={busy}
               onTestLogin={() => void signInForTest()}
-              onTestAdminLogin={() => void signInForTest(true)}
+              onTestAdminLogin={() => void signInForTest('admin')}
+              onTestSuperAdminLogin={() => void signInForTest('super')}
+              superAdminIdentity={session.testSuperAdminIdentity ?? null}
             />
           )}
           {/*
@@ -166,10 +178,8 @@ export function SessionNav() {
             subtitle={
               session?.authenticated
                 ? session.accountStatus === 'disabled'
-                  ? `${session.role === 'admin' ? '管理员' : '普通用户'} · 账户已禁用`
-                  : session.role === 'admin'
-                    ? '管理员'
-                    : '普通用户'
+                  ? `${roleLabel(session)} · 账户已禁用`
+                  : roleLabel(session)
                 : '未登录'
             }
             initial={(session?.nickname ?? session?.userId ?? '?').slice(0, 1).toUpperCase()}
@@ -180,7 +190,9 @@ export function SessionNav() {
             testLoginEnabled={session?.testLoginEnabled === true}
             onSignOut={() => void signOut()}
             onTestLogin={() => void signInForTest()}
-            onTestAdminLogin={() => void signInForTest(true)}
+            onTestAdminLogin={() => void signInForTest('admin')}
+            onTestSuperAdminLogin={() => void signInForTest('super')}
+            superAdminIdentity={session?.testSuperAdminIdentity ?? null}
           />
         </div>
       </nav>

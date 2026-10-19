@@ -22,6 +22,8 @@ interface AdminUserJson {
   nickname: string;
   avatar_url: string | null;
   github_login: string | null;
+  /** 部署绑定的超级管理员：站内不可撤销、不可禁用（服务端同样会拒）。 */
+  is_super_admin: boolean;
   role: 'user' | 'admin';
   account_status: 'active' | 'disabled';
   management_version: number;
@@ -33,6 +35,12 @@ interface AdminUserJson {
 interface UsersResponse {
   users: AdminUserJson[];
   active_admin_count: number;
+  /** 观看者是不是超级管理员：只有他能授予/撤销管理员。 */
+  viewer_is_super_admin: boolean;
+  /** 部署是否绑定了超级管理员（没绑定 → 站内谁都授不了权）。 */
+  super_admin_configured: boolean;
+  /** 配置写错时的人话说明（例如填了多个 ID）。 */
+  super_admin_config_problem: string | null;
 }
 
 interface UserMutationResponse {
@@ -53,6 +61,9 @@ export function AdminUserPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   /** 每个用户的禁用原因输入（禁用时必须非空）。 */
   const [reasons, setReasons] = useState<Record<string, string>>({});
+  /** 待确认的角色变更：必须手打目标昵称才能提交（服务端还会再校验一次）。 */
+  const [pendingRole, setPendingRole] = useState<{ user: AdminUserJson; nextRole: 'admin' | 'user' } | null>(null);
+  const [typedNickname, setTypedNickname] = useState('');
   const keysRef = useRef<KeyStore>(new Map());
 
   const load = useCallback(async () => {
@@ -88,9 +99,11 @@ export function AdminUserPanel() {
         setNotice(describeOutcome(user, result));
         setReasons((prev) => ({ ...prev, [user.user_id]: '' }));
         await load();
+        return true;
       } catch (e) {
         // 失败：保留同一个键，用户重试时复用同一个操作。
         setError(e as ApiError);
+        return false;
       } finally {
         setBusy(null);
       }
@@ -98,6 +111,7 @@ export function AdminUserPanel() {
     [load],
   );
 
+  const viewerIsSuperAdmin = data?.viewer_is_super_admin === true;
   const activeAdminCount = data?.active_admin_count ?? 0;
   const lastActiveAdminId = useMemo(() => {
     if (data === null || activeAdminCount !== 1) return null;
@@ -126,10 +140,29 @@ export function AdminUserPanel() {
             <span>可用管理员 {data.active_admin_count} 名</span>
           </div>
 
+          {data.super_admin_config_problem !== null ? (
+            <p className="notice warn">
+              超级管理员配置有误：{data.super_admin_config_problem}
+              <br />
+              修正部署配置（<code>SUPER_ADMIN_GITHUB_ID</code>）并重启服务后才会生效。
+            </p>
+          ) : !data.super_admin_configured ? (
+            <p className="notice warn">
+              部署未绑定超级管理员（<code>SUPER_ADMIN_GITHUB_ID</code> 为空）：
+              当前<strong>没有任何人</strong>能授予或撤销管理员。这是刻意的 fail-closed ——
+              没配置就不放权，而不是退化成谁都能提权。
+            </p>
+          ) : !data.viewer_is_super_admin ? (
+            <p className="notice">
+              你当前是<strong>管理员</strong>：可以审核内容、处理用户状态，但
+              <strong>授予/撤销管理员只由超级管理员执行</strong>（他是部署时绑定的那一个身份）。
+            </p>
+          ) : null}
+
           {data.active_admin_count <= 1 ? (
             <p className="notice warn">
               当前只有 {data.active_admin_count} 名可用管理员：撤销或禁用<strong>最后一名可用管理员</strong>会被拒绝
-              （系统必须至少保留一名能审核内容的管理员）。请先把另一名用户授予管理员，再处理这一名。
+              （系统必须至少保留一名能审核内容的管理员）。
             </p>
           ) : null}
 
@@ -177,7 +210,15 @@ export function AdminUserPanel() {
                         }}
                       >
                         {/* ---- 角色 ---- */}
-                        {user.account_status === 'disabled' && !isAdmin ? (
+                        {user.is_super_admin ? (
+                          <span className="muted" style={{ fontSize: 13 }}>
+                            部署绑定的超级管理员：站内不可撤销、不可禁用（要换人只能改部署配置并重启）。
+                          </span>
+                        ) : !viewerIsSuperAdmin ? (
+                          <span className="muted" style={{ fontSize: 13 }}>
+                            只有超级管理员能授予/撤销管理员。
+                          </span>
+                        ) : user.account_status === 'disabled' && !isAdmin ? (
                           <span className="muted" style={{ fontSize: 13 }}>
                             账户已禁用：先恢复才能授予管理员。
                           </span>
@@ -187,12 +228,11 @@ export function AdminUserPanel() {
                             className="link-btn"
                             disabled={rowBusy || (isAdmin && isLastActiveAdmin)}
                             title={isAdmin && isLastActiveAdmin ? '最后一名可用管理员不能被撤销' : undefined}
-                            onClick={() =>
-                              void mutate(user, 'set_role', {
-                                role: isAdmin ? 'user' : 'admin',
-                                expected_management_version: user.management_version,
-                              })
-                            }
+                            onClick={() => {
+                              // 不直接提交：先弹确认，要求手打对方昵称（服务端也会校验）。
+                              setTypedNickname('');
+                              setPendingRole({ user, nextRole: isAdmin ? 'user' : 'admin' });
+                            }}
                           >
                             {isAdmin ? '撤销管理员' : '授予管理员'}
                           </button>
@@ -212,11 +252,15 @@ export function AdminUserPanel() {
                           disabled={
                             rowBusy ||
                             reason.trim() === '' ||
+                            // 超级管理员不可禁用（服务端也会拒绝）
+                            (isActive && user.is_super_admin) ||
                             // 最后一名可用管理员：禁用会被拒绝。恢复操作不做限制。
                             (isActive && user.role === 'admin' && isLastActiveAdmin)
                           }
                           title={
-                            isActive && user.role === 'admin' && isLastActiveAdmin
+                            isActive && user.is_super_admin
+                              ? '部署绑定的超级管理员不可禁用'
+                              : isActive && user.role === 'admin' && isLastActiveAdmin
                               ? '最后一名可用管理员不能被禁用'
                               : reason.trim() === ''
                                 ? '原因必填'
@@ -248,6 +292,80 @@ export function AdminUserPanel() {
           </p>
         </>
       )}
+
+      {/*
+        授予/撤销管理员的确认框：**必须手打目标昵称**才能提交。
+        这是"防误点"那一层；真正的闸在服务端（confirm_target_nickname 必须与目标昵称一致），
+        所以直接打 API 也绕不过去。
+      */}
+      {pendingRole !== null ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={pendingRole.nextRole === 'admin' ? '确认授予管理员' : '确认撤销管理员'}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.35)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 16,
+            zIndex: 50,
+          }}
+          onClick={() => setPendingRole(null)}
+        >
+          <div
+            className="panel"
+            style={{ maxWidth: 460, width: '100%', background: 'var(--md-sys-color-surface)' }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 style={{ marginTop: 0 }}>
+              {pendingRole.nextRole === 'admin' ? '授予管理员权限' : '撤销管理员权限'}
+            </h3>
+            <p className="muted" style={{ fontSize: 14 }}>
+              {pendingRole.nextRole === 'admin' ? '把' : '把'}{' '}
+              <strong>「{pendingRole.user.nickname}」</strong>{' '}
+              {pendingRole.nextRole === 'admin'
+                ? '提升为管理员？他将能审核内容、处理用户与站点配置。'
+                : '的管理员权限撤销？撤销后他仍是普通用户，可以正常浏览与发言。'}
+            </p>
+            <label style={{ display: 'block', fontSize: 13, margin: '10px 0 4px' }}>
+              请原样输入对方昵称以确认：<code>{pendingRole.user.nickname}</code>
+            </label>
+            <input
+              autoFocus
+              aria-label="确认昵称"
+              placeholder={pendingRole.user.nickname}
+              value={typedNickname}
+              onChange={(event) => setTypedNickname(event.target.value)}
+              style={{ width: '100%' }}
+            />
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button
+                type="button"
+                className="button primary"
+                disabled={typedNickname.trim() !== pendingRole.user.nickname || busy !== null}
+                onClick={() => {
+                  const p = pendingRole;
+                  void mutate(p.user, 'set_role', {
+                    role: p.nextRole,
+                    expected_management_version: p.user.management_version,
+                    confirm_target_nickname: typedNickname.trim(),
+                  }).then((done) => {
+                    // 成功才关框；失败保持打开，错误显示在面板顶部，可直接改了重试
+                    if (done) setPendingRole(null);
+                  });
+                }}
+              >
+                确认{pendingRole.nextRole === 'admin' ? '授予' : '撤销'}
+              </button>
+              <button type="button" className="button" onClick={() => setPendingRole(null)}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

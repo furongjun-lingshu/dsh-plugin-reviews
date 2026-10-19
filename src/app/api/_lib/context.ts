@@ -22,7 +22,12 @@ export async function currentContext(): Promise<CallerContext> {
   const identity = createIdentityService({ db: getDb() });
   const resolved = await identity.resolveSession(token, Date.now());
   if (!resolved) return anonymousContext;
-  return { userId: resolved.userId, role: resolved.role, accountStatus: resolved.accountStatus };
+  return {
+    userId: resolved.userId,
+    role: resolved.role,
+    accountStatus: resolved.accountStatus,
+    isSuperAdmin: resolved.isSuperAdmin,
+  };
 }
 
 /** 读取 request_id：优先复用入站请求头，便于跨服务追踪。 */

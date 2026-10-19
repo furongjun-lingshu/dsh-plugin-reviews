@@ -5,11 +5,13 @@
  *
  * body（字段与项目其它路由一致用 snake_case）：
  *   { action: 'set_role',   role: 'admin'|'user',     expected_management_version: <int>,
- *     request_key: <str>, reason?: <str> }
+ *     confirm_target_nickname: <str 必填>, request_key: <str>, reason?: <str> }
  *   { action: 'set_status', account_status: 'active'|'disabled', reason: <str 必填>,
  *     expected_account_status_version: <int>, request_key: <str> }
  *
  * 权限：非管理员一律 403（**绝不提权**：普通用户改不了自己的角色，也改不了别人的）。
+ * **授予或撤销管理员是超级管理员专属**（403 + context.guard='super_admin_required'），
+ * 且必须带 `confirm_target_nickname`（原样重复目标昵称），否则 400。
  * 版本冲突 409（`version_conflict`）；同键不同内容 409（`request_key_reused`）；
  * 幂等重放返回原结果（`replayed: true`，本次不重复执行）。
  * 被"最后一名可用管理员"等守卫拦住时是 403 + `error.context.guard`（稳定标记，不必匹配中文）。
@@ -43,6 +45,7 @@ export async function PATCH(
     const body = (await readJson(request)) as {
       action?: unknown;
       role?: unknown;
+      confirm_target_nickname?: unknown;
       account_status?: unknown;
       reason?: unknown;
       expected_management_version?: unknown;
@@ -72,6 +75,10 @@ export async function PATCH(
         role: body.role,
         expectedManagementVersion: body.expected_management_version as number,
         requestKey: body.request_key,
+        // 授予/撤销管理员的显式确认（服务层强校验；缺失或不一致一律 400）。
+        ...(typeof body.confirm_target_nickname === 'string'
+          ? { confirmTargetNickname: body.confirm_target_nickname }
+          : {}),
         // 角色变更的原因可选：省略时服务层按动作生成（审计的 reason 不允许为空）。
         ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
       });

@@ -4,11 +4,11 @@
  * ## 为什么必须有这个文件
  *
  * 规划要求"日常数据管理全部通过后台页面完成，不得要求管理员直接改数据库表"，
- * 而在它之前，改变用户角色/状态的**唯一**途径是 `scripts/grant-admin.mjs`（或手拼 SQL：
+ * 而在它之前，改变用户角色/状态的**唯一**途径是上机脚本（或手拼 SQL：
  * 验收脚本就这么干过 `UPDATE users SET role='admin'`）。本文件把那条 CLI 的口径
  * 搬进服务层，再由 `GET/PATCH /api/admin/users` 暴露给后台页面。
  *
- * ## 与 CLI 一致的口径（`scripts/grant-admin.mjs`）
+ * ## 与上机脚本一致的口径
  *
  *  1. **至少保留一名可用管理员**（可用 = `role='admin' AND account_status='active'`）：
  *     撤销或禁用会把最后一个可用管理员拿掉时**拒绝执行**，并且不做部分写入（在事务里抛错回滚）；
@@ -38,6 +38,7 @@ import { withTransaction } from '@/server/platform/tx';
 import { newId } from '@/server/platform/id';
 import { digest } from '@/server/platform/digest';
 import { nowMs } from '@/server/platform/time';
+import { SUPER_ADMIN_ENV, configuredSuperAdminId, isSuperAdminProviderId } from './super-admin';
 import { DomainError, ErrorCodes, err } from '@/packages/common/errors';
 
 export type UserRole = 'user' | 'admin';
@@ -60,6 +61,8 @@ export interface AdminUserView {
   avatarUrl: string | null;
   /** GitHub 登录名（未绑定 GitHub 时为 null）。 */
   githubLogin: string | null;
+  /** 是否部署绑定的超级管理员（由 SUPER_ADMIN_GITHUB_ID 决定，不落库）。 */
+  isSuperAdmin: boolean;
   role: UserRole;
   accountStatus: AccountStatus;
   managementVersion: number;
@@ -77,6 +80,11 @@ export interface SetUserRoleInput {
   expectedManagementVersion: number;
   /** 幂等键：同一个键重放同一次操作。 */
   requestKey: string;
+  /**
+   * **显式确认**：授予或撤销管理员时，必须原样重复目标用户的昵称。
+   * 不符 → `input_invalid`。这是服务端的一道闸，直接打 API 也绕不过界面上的"手打昵称"。
+   */
+  confirmTargetNickname?: string;
   /** 可选说明；省略时按动作生成（审计的 reason 不允许为空）。 */
   reason?: string;
 }
@@ -109,6 +117,7 @@ export interface AdminUserJson {
   nickname: string;
   avatar_url: string | null;
   github_login: string | null;
+  is_super_admin: boolean;
   role: UserRole;
   account_status: AccountStatus;
   management_version: number;
@@ -123,6 +132,7 @@ export function toUserJson(user: AdminUserView): AdminUserJson {
     nickname: user.nickname,
     avatar_url: user.avatarUrl,
     github_login: user.githubLogin,
+    is_super_admin: user.isSuperAdmin,
     role: user.role,
     account_status: user.accountStatus,
     management_version: user.managementVersion,
@@ -143,21 +153,25 @@ interface UserViewRow {
   created_at: number;
   last_login_at: number | null;
   github_login: string | null;
+  github_provider_user_id: string | null;
 }
 
 /** 用户视图的**唯一定义**：列出与单条读取共用，避免两处 SQL 漂移。 */
 const USER_VIEW_SELECT = `SELECT u.id AS user_id, u.nickname, u.avatar_url, u.role, u.account_status,
                                  u.management_version, u.account_status_version, u.created_at, u.last_login_at,
-                                 ei.provider_username AS github_login
+                                 ei.provider_username AS github_login,
+                                 ei.provider_user_id AS github_provider_user_id
                             FROM users u
                             LEFT JOIN external_identities ei ON ei.user_id = u.id AND ei.provider = 'github'`;
 
-function toView(row: UserViewRow): AdminUserView {
+function toView(row: UserViewRow, env: NodeJS.ProcessEnv = process.env): AdminUserView {
   return {
     userId: row.user_id,
     nickname: row.nickname,
     avatarUrl: row.avatar_url,
     githubLogin: row.github_login,
+    // 超管身份从部署配置现算，不落库：改配置 + 重启即生效，不需要数据修补。
+    isSuperAdmin: isSuperAdminProviderId(row.github_provider_user_id, env),
     role: row.role,
     accountStatus: row.account_status,
     managementVersion: row.management_version,
@@ -167,20 +181,24 @@ function toView(row: UserViewRow): AdminUserView {
   };
 }
 
-function loadUserView(handle: SqliteDatabase, userId: string): AdminUserView | undefined {
+function loadUserView(
+  handle: SqliteDatabase,
+  userId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): AdminUserView | undefined {
   const row = handle.prepare(`${USER_VIEW_SELECT} WHERE u.id = ?`).get(userId) as UserViewRow | undefined;
-  return row ? toView(row) : undefined;
+  return row ? toView(row, env) : undefined;
 }
 
 /**
  * 列出全部用户（含 GitHub 账号、昵称、角色、账户状态、注册/最近登录时间）。
- * 排序与 `scripts/grant-admin.mjs --list` 一致：管理员在前，再按注册时间。
+ * 排序与 `scripts/set-super-admin.mjs --list` 一致：管理员在前，再按注册时间。
  */
-export function listUsers(db: SqliteDatabase = getDb()): AdminUserView[] {
+export function listUsers(db: SqliteDatabase = getDb(), env: NodeJS.ProcessEnv = process.env): AdminUserView[] {
   const rows = db
     .prepare(`${USER_VIEW_SELECT} ORDER BY (u.role = 'admin') DESC, u.created_at ASC, u.id ASC`)
     .all() as UserViewRow[];
-  return rows.map(toView);
+  return rows.map((row) => toView(row, env));
 }
 
 /** 当前**可用**管理员数（`role='admin' AND account_status='active'`）——守卫与界面提示共用。 */
@@ -241,6 +259,49 @@ function assertActorIsActiveAdmin(handle: SqliteDatabase, actorUserId: string): 
   if (!actor) throw err.forbidden('该操作需要管理员权限。');
   if (actor.role !== 'admin' || actor.account_status !== 'active') {
     throw err.forbidden('该操作需要管理员权限（账户须为正常状态的管理员）。');
+  }
+}
+
+/** 目标用户绑定的 GitHub 稳定 ID（未绑定为 null）。 */
+function githubProviderUserId(handle: SqliteDatabase, userId: string): string | null {
+  const row = handle
+    .prepare("SELECT provider_user_id FROM external_identities WHERE user_id = ? AND provider = 'github'")
+    .get(userId) as { provider_user_id: string } | undefined;
+  return row?.provider_user_id ?? null;
+}
+
+/** 该用户是否就是部署绑定的超级管理员。 */
+export function isDeploymentSuperAdmin(
+  handle: SqliteDatabase,
+  userId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isSuperAdminProviderId(githubProviderUserId(handle, userId), env);
+}
+
+/** 授予/撤销管理员是**超管专属**：普通管理员连服务层都进不去。 */
+function assertActorIsSuperAdmin(handle: SqliteDatabase, actorUserId: string, env: NodeJS.ProcessEnv): void {
+  if (!isDeploymentSuperAdmin(handle, actorUserId, env)) {
+    throw guardRefusal('该操作需要超级管理员权限：只有部署绑定的超级管理员能授予或撤销管理员。', 'super_admin_required', {
+      super_admin_configured: configuredSuperAdminId(env) !== null,
+    });
+  }
+}
+
+/**
+ * 授予/撤销管理员必须**显式确认**：请求体里原样重复目标用户昵称。
+ * 为什么放服务端：界面上"手打昵称"只是防误点，直接打 API 的人不该绕过这道闸。
+ */
+function requireTargetNicknameConfirmation(raw: unknown, nickname: string): void {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw err.input('授予或撤销管理员必须显式确认：请原样填写目标用户的昵称。', [
+      { path: 'confirm_target_nickname', message: '必填且不能为纯空白。' },
+    ]);
+  }
+  if (raw.trim() !== nickname) {
+    throw err.input('确认昵称与目标用户不一致，操作已拒绝。', [
+      { path: 'confirm_target_nickname', message: `必须与目标用户昵称完全一致（${nickname}）。` },
+    ]);
   }
 }
 
@@ -308,8 +369,8 @@ function insertAudit(
 }
 
 /** 把当前视图重新读出来（变更后返回给调用方，附带最新版本号）。 */
-function reread(handle: SqliteDatabase, userId: string): AdminUserView {
-  const view = loadUserView(handle, userId);
+function reread(handle: SqliteDatabase, userId: string, env: NodeJS.ProcessEnv = process.env): AdminUserView {
+  const view = loadUserView(handle, userId, env);
   if (!view) throw err.internal('用户视图读取失败：目标用户在事务内消失。');
   return view;
 }
@@ -332,6 +393,8 @@ function reread(handle: SqliteDatabase, userId: string): AdminUserView {
 export function setUserRole(
   db: SqliteDatabase = getDb(),
   input: SetUserRoleInput,
+  /** 部署配置视图（默认 process.env）。测试注入，避免改进程环境。 */
+  env: NodeJS.ProcessEnv = process.env,
 ): UserAdminChangeResult {
   const requestKey = requireRequestKey(input.requestKey);
   const targetUserId = requireTargetUserId(input.targetUserId);
@@ -366,15 +429,22 @@ export function setUserRole(
         // 重放：不重复执行、不写第二条审计。返回**当前**视图（不做历史快照还原 ——
         // 那会把已被后续操作改过的现状伪装成原样）。
         return {
-          user: reread(handle, receipt.targetId),
+          user: reread(handle, receipt.targetId, env),
           changed: true,
           replayed: true,
           revokedSessionCount: 0,
         };
       }
 
-      const target = loadUserView(handle, targetUserId);
+      const target = loadUserView(handle, targetUserId, env);
       if (!target) throw err.unavailable('目标用户不存在。');
+
+      // 权限矩阵：**只有超级管理员**能授予或撤销管理员。
+      // 放在 CAS 之前 —— 没资格的人不该靠错误码差异反推出目标用户的版本号。
+      if (grant || target.role === 'admin') {
+        assertActorIsSuperAdmin(handle, input.actorUserId, env);
+        requireTargetNicknameConfirmation(input.confirmTargetNickname, target.nickname);
+      }
 
       // CAS 在"无变更"判定之前：版本不符一律冲突，绝不静默放过。
       if (target.managementVersion !== expectedVersion) {
@@ -387,6 +457,16 @@ export function setUserRole(
 
       if (target.role === input.role) {
         return { user: target, changed: false, replayed: false, revokedSessionCount: 0 };
+      }
+
+      // 部署绑定的超级管理员**不可被剥夺**：他本身就是管理员，所以任何"降到 user"的
+      // 变更都在这里被拒。要换人只能改部署配置（SUPER_ADMIN_GITHUB_ID）并重启。
+      if (target.isSuperAdmin) {
+        throw guardRefusal(
+          `拒绝执行：${target.nickname} 是部署绑定的超级管理员，站内不能撤销。要换人请修改 ${SUPER_ADMIN_ENV} 并重启服务。`,
+          'super_admin_immutable',
+          { target_user_id: target.userId },
+        );
       }
 
       if (grant && target.accountStatus !== 'active') {
@@ -439,6 +519,7 @@ export function setUserRole(
         targetSnapshot: target,
         changes: {
           request_digest: requestDigest,
+          target_is_super_admin: target.isSuperAdmin,
           from_role: target.role,
           to_role: input.role,
           management_version_before: target.managementVersion,
@@ -448,7 +529,7 @@ export function setUserRole(
         now,
       });
 
-      return { user: reread(handle, target.userId), changed: true, replayed: false, revokedSessionCount: 0 };
+      return { user: reread(handle, target.userId, env), changed: true, replayed: false, revokedSessionCount: 0 };
     },
     db,
   );
@@ -468,6 +549,7 @@ export function setUserRole(
 export function setUserStatus(
   db: SqliteDatabase = getDb(),
   input: SetUserStatusInput,
+  env: NodeJS.ProcessEnv = process.env,
 ): UserAdminChangeResult {
   const requestKey = requireRequestKey(input.requestKey);
   const targetUserId = requireTargetUserId(input.targetUserId);
@@ -507,14 +589,14 @@ export function setUserStatus(
         }
         const revoked = receipt.changes['revoked_sessions'];
         return {
-          user: reread(handle, receipt.targetId),
+          user: reread(handle, receipt.targetId, env),
           changed: true,
           replayed: true,
           revokedSessionCount: typeof revoked === 'number' && Number.isInteger(revoked) ? revoked : 0,
         };
       }
 
-      const target = loadUserView(handle, targetUserId);
+      const target = loadUserView(handle, targetUserId, env);
       if (!target) throw err.unavailable('目标用户不存在。');
 
       if (target.accountStatusVersion !== expectedVersion) {
@@ -527,6 +609,15 @@ export function setUserStatus(
 
       if (target.accountStatus === input.status) {
         return { user: target, changed: false, replayed: false, revokedSessionCount: 0 };
+      }
+
+      // 超级管理员**不可被禁用**：禁掉他等于让整个站点失去唯一能授权的人。
+      if (input.status === 'disabled' && target.isSuperAdmin) {
+        throw guardRefusal(
+          `拒绝执行：${target.nickname} 是部署绑定的超级管理员，站内不能禁用。要换人请修改 ${SUPER_ADMIN_ENV} 并重启服务。`,
+          'super_admin_immutable',
+          { target_user_id: target.userId },
+        );
       }
 
       if (input.status === 'disabled' && target.role === 'admin') {
@@ -591,7 +682,7 @@ export function setUserStatus(
       });
 
       return {
-        user: reread(handle, target.userId),
+        user: reread(handle, target.userId, env),
         changed: true,
         replayed: false,
         revokedSessionCount,

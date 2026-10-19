@@ -84,6 +84,21 @@ function bindGithub(db: TestDb['db'], userId: string, login: string): void {
   ).run(newId(now), userId, `gh-${login}`, login, `https://github.com/${login}`, now, now);
 }
 
+/**
+ * 部署绑定的超级管理员（新架构：授/撤管理员是**超管专属**，且必须带确认昵称）。
+ * 给 actor 绑上固定 login，并把同一个 provider_user_id 设进注入的 env。
+ */
+const SUPER_LOGIN = 'super-admin';
+const SUPER_ENV: NodeJS.ProcessEnv = { NODE_ENV: 'test', SUPER_ADMIN_GITHUB_ID: `gh-${SUPER_LOGIN}` };
+/** 未配置超级管理员的部署视图（NODE_ENV 是 ProcessEnv 的必填字段）。 */
+const NO_SUPER_ENV: NodeJS.ProcessEnv = { NODE_ENV: 'test' };
+
+function insertSuperAdmin(db: TestDb['db'], nickname = '超级管理员'): string {
+  const id = insertUser(db, { nickname, role: 'admin' });
+  bindGithub(db, id, SUPER_LOGIN);
+  return id;
+}
+
 function githubIdentity(login: string): IdentifiedGithubUser {
   return {
     providerUserId: `gh-${login}`,
@@ -146,7 +161,7 @@ describe('用户管理 · 列表', () => {
 
     const users = listUsers(db);
     expect(users).toHaveLength(3);
-    // 管理员在前（与 scripts/grant-admin.mjs --list 同口径）
+    // 管理员在前（与 scripts/set-super-admin.mjs --list 同口径）
     expect(users[0]!.userId).toBe(admin);
     expect(users[0]).toMatchObject({
       nickname: '管理员',
@@ -160,6 +175,8 @@ describe('用户管理 · 列表', () => {
     expect(users[1]!.nickname).toBe('普通用户');
     expect(users[2]).toMatchObject({ nickname: '被封的', accountStatus: 'disabled', githubLogin: null });
     expect(countActiveAdmins(db)).toBe(1);
+    // 没配 SUPER_ADMIN_GITHUB_ID 时，没有任何人被标成超级管理员（fail-closed）
+    expect(users.every((u) => u.isSuperAdmin === false)).toBe(true);
 
     // 接口层 JSON 形状（GET 与 PATCH 共用一份）
     expect(toUserJson(users[0]!)).toMatchObject({
@@ -180,16 +197,21 @@ describe('用户管理 · 列表', () => {
 describe('用户管理 · 角色变更', () => {
   it('授予管理员：CAS 通过、版本 +1、写一条审计（含操作者/目标/前后值/原因）', () => {
     const { db } = setup();
-    const admin = insertUser(db, { nickname: '管理员', role: 'admin' });
+    const admin = insertSuperAdmin(db, '管理员');
     const target = insertUser(db, { nickname: '候选人' });
 
-    const result = setUserRole(db, {
-      actorUserId: admin,
-      targetUserId: target,
-      role: 'admin',
-      expectedManagementVersion: 0,
-      requestKey: 'rk-grant-1',
-    });
+    const result = setUserRole(
+      db,
+      {
+        actorUserId: admin,
+        targetUserId: target,
+        role: 'admin',
+        expectedManagementVersion: 0,
+        confirmTargetNickname: '候选人',
+        requestKey: 'rk-grant-1',
+      },
+      SUPER_ENV,
+    );
 
     expect(result).toMatchObject({ changed: true, replayed: false, revokedSessionCount: 0 });
     expect(result.user).toMatchObject({ userId: target, role: 'admin', managementVersion: 1 });
@@ -214,42 +236,136 @@ describe('用户管理 · 角色变更', () => {
     });
   });
 
-  it('拒绝撤销最后一名可用管理员，且不做任何写入（版本、审计都不动）', () => {
+  it('超级管理员不可剥夺：连他自己都撤销不了（且不做任何写入）', () => {
     const { db } = setup();
-    const admin = insertUser(db, { nickname: '唯一管理员', role: 'admin' });
+    const superAdmin = insertSuperAdmin(db, '唯一管理员');
     insertUser(db, { nickname: '普通用户' });
 
     const e = expectDomainError(() =>
-      setUserRole(db, {
-        actorUserId: admin,
-        targetUserId: admin,
-        role: 'user',
-        expectedManagementVersion: 0,
-        requestKey: 'rk-revoke-last',
-      }),
+      setUserRole(
+        db,
+        {
+          actorUserId: superAdmin,
+          targetUserId: superAdmin,
+          role: 'user',
+          expectedManagementVersion: 0,
+          confirmTargetNickname: '唯一管理员',
+          requestKey: 'rk-revoke-super',
+        },
+        SUPER_ENV,
+      ),
     );
     expect(e.code).toBe('forbidden');
-    expect(e.context?.guard).toBe('last_active_admin');
-    expect(e.message).toContain('最后一个可用管理员');
+    expect(e.context?.guard).toBe('super_admin_immutable');
+    expect(e.message).toContain('超级管理员');
 
     // 没有部分写入：角色与版本原样，也没有留下审计
-    expect(userRow(db, admin)).toMatchObject({ role: 'admin', management_version: 0 });
+    expect(userRow(db, superAdmin)).toMatchObject({ role: 'admin', management_version: 0 });
     expect(auditRows(db, SET_USER_ROLE_ACTION)).toHaveLength(0);
     expect(countActiveAdmins(db)).toBe(1);
   });
 
+  it('普通管理员没有授予/撤销权：403 super_admin_required（未配置超管时同理）', () => {
+    const { db } = setup();
+    const normalAdmin = insertUser(db, { nickname: '普通管理员', role: 'admin' });
+    bindGithub(db, normalAdmin, 'just-an-admin');
+    const target = insertUser(db, { nickname: '候选人' });
+
+    const e = expectDomainError(() =>
+      setUserRole(
+        db,
+        {
+          actorUserId: normalAdmin,
+          targetUserId: target,
+          role: 'admin',
+          expectedManagementVersion: 0,
+          confirmTargetNickname: '候选人',
+          requestKey: 'rk-not-super',
+        },
+        SUPER_ENV,
+      ),
+    );
+    expect(e.code).toBe('forbidden');
+    expect(e.context?.guard).toBe('super_admin_required');
+    expect(e.context?.super_admin_configured).toBe(true);
+    expect(userRow(db, target).role).toBe('user');
+  });
+
+  it('部署没配超级管理员时：谁都不能授予管理员（fail-closed，不是"谁都能提权"）', () => {
+    const { db } = setup();
+    const admin = insertSuperAdmin(db, '管理员');
+    const target = insertUser(db, { nickname: '候选人' });
+
+    const e = expectDomainError(() =>
+      setUserRole(
+        db,
+        {
+          actorUserId: admin,
+          targetUserId: target,
+          role: 'admin',
+          expectedManagementVersion: 0,
+          confirmTargetNickname: '候选人',
+          requestKey: 'rk-unconfigured',
+        },
+        NO_SUPER_ENV,
+      ),
+    );
+    expect(e.code).toBe('forbidden');
+    expect(e.context?.guard).toBe('super_admin_required');
+    expect(e.context?.super_admin_configured).toBe(false);
+  });
+
+  it('显式确认是硬闸：缺确认或昵称不一致一律 input_invalid，不改数据', () => {
+    const { db } = setup();
+    const admin = insertSuperAdmin(db, '管理员');
+    const target = insertUser(db, { nickname: '候选人' });
+
+    const missing = expectDomainError(() =>
+      setUserRole(
+        db,
+        { actorUserId: admin, targetUserId: target, role: 'admin', expectedManagementVersion: 0, requestKey: 'rk-no-confirm' },
+        SUPER_ENV,
+      ),
+    );
+    expect(missing.code).toBe('input_invalid');
+    expect(missing.fields?.map((f) => f.path)).toContain('confirm_target_nickname');
+
+    const wrong = expectDomainError(() =>
+      setUserRole(
+        db,
+        {
+          actorUserId: admin,
+          targetUserId: target,
+          role: 'admin',
+          expectedManagementVersion: 0,
+          confirmTargetNickname: '不是他',
+          requestKey: 'rk-wrong-confirm',
+        },
+        SUPER_ENV,
+      ),
+    );
+    expect(wrong.code).toBe('input_invalid');
+    expect(userRow(db, target).role).toBe('user');
+    expect(auditRows(db, SET_USER_ROLE_ACTION)).toHaveLength(0);
+  });
+
   it('已禁用的管理员不算"可用管理员"：撤销被禁用的管理员不触发守卫', () => {
     const { db } = setup();
-    const active = insertUser(db, { nickname: '在任管理员', role: 'admin' });
+    const active = insertSuperAdmin(db, '在任管理员');
     const asleep = insertUser(db, { nickname: '停用管理员', role: 'admin', accountStatus: 'disabled' });
 
-    const result = setUserRole(db, {
-      actorUserId: active,
-      targetUserId: asleep,
-      role: 'user',
-      expectedManagementVersion: 0,
-      requestKey: 'rk-revoke-disabled-admin',
-    });
+    const result = setUserRole(
+      db,
+      {
+        actorUserId: active,
+        targetUserId: asleep,
+        role: 'user',
+        expectedManagementVersion: 0,
+        confirmTargetNickname: '停用管理员',
+        requestKey: 'rk-revoke-disabled-admin',
+      },
+      SUPER_ENV,
+    );
     expect(result.user.role).toBe('user');
     expect(countActiveAdmins(db)).toBe(1);
   });
@@ -257,32 +373,42 @@ describe('用户管理 · 角色变更', () => {
   it('有第二名可用管理员时，撤销是允许的（守卫不能误伤）', () => {
     const { db } = setup();
     const a = insertUser(db, { nickname: '甲', role: 'admin' });
-    const b = insertUser(db, { nickname: '乙', role: 'admin' });
+    const b = insertSuperAdmin(db, '乙');
 
-    const result = setUserRole(db, {
-      actorUserId: b,
-      targetUserId: a,
-      role: 'user',
-      expectedManagementVersion: 0,
-      requestKey: 'rk-revoke-ok',
-    });
+    const result = setUserRole(
+      db,
+      {
+        actorUserId: b,
+        targetUserId: a,
+        role: 'user',
+        expectedManagementVersion: 0,
+        confirmTargetNickname: '甲',
+        requestKey: 'rk-revoke-ok',
+      },
+      SUPER_ENV,
+    );
     expect(result.user).toMatchObject({ userId: a, role: 'user', managementVersion: 1 });
     expect(countActiveAdmins(db)).toBe(1);
   });
 
   it('CAS：management_version 不符一律版本冲突，且不改任何数据', () => {
     const { db } = setup();
-    const admin = insertUser(db, { nickname: '管理员', role: 'admin' });
+    const admin = insertSuperAdmin(db, '管理员');
     const target = insertUser(db, { nickname: '候选人' });
 
     const e = expectDomainError(() =>
-      setUserRole(db, {
-        actorUserId: admin,
-        targetUserId: target,
-        role: 'admin',
-        expectedManagementVersion: 7,
-        requestKey: 'rk-stale',
-      }),
+      setUserRole(
+        db,
+        {
+          actorUserId: admin,
+          targetUserId: target,
+          role: 'admin',
+          expectedManagementVersion: 7,
+          confirmTargetNickname: '候选人',
+          requestKey: 'rk-stale',
+        },
+        SUPER_ENV,
+      ),
     );
     expect(e.code).toBe('version_conflict');
     expect(e.context).toMatchObject({ current_management_version: 0, expected_management_version: 7 });
@@ -293,18 +419,19 @@ describe('用户管理 · 角色变更', () => {
 
   it('幂等：同键同内容重放不重复执行、不写第二条审计、版本只加一次', () => {
     const { db } = setup();
-    const admin = insertUser(db, { nickname: '管理员', role: 'admin' });
+    const admin = insertSuperAdmin(db, '管理员');
     const target = insertUser(db, { nickname: '候选人' });
     const input = {
       actorUserId: admin,
       targetUserId: target,
       role: 'admin' as const,
       expectedManagementVersion: 0,
+      confirmTargetNickname: '候选人',
       requestKey: 'rk-same',
     };
 
-    const first = setUserRole(db, input);
-    const second = setUserRole(db, input);
+    const first = setUserRole(db, input, SUPER_ENV);
+    const second = setUserRole(db, input, SUPER_ENV);
 
     expect(first).toMatchObject({ changed: true, replayed: false });
     expect(second).toMatchObject({ changed: true, replayed: true });
@@ -315,25 +442,35 @@ describe('用户管理 · 角色变更', () => {
 
   it('同键不同内容 → request_key_reused（不覆盖历史）', () => {
     const { db } = setup();
-    const admin = insertUser(db, { nickname: '管理员', role: 'admin' });
+    const admin = insertSuperAdmin(db, '管理员');
     const target = insertUser(db, { nickname: '候选人' });
 
-    setUserRole(db, {
-      actorUserId: admin,
-      targetUserId: target,
-      role: 'admin',
-      expectedManagementVersion: 0,
-      requestKey: 'rk-reuse',
-    });
-
-    const e = expectDomainError(() =>
-      setUserRole(db, {
+    setUserRole(
+      db,
+      {
         actorUserId: admin,
         targetUserId: target,
-        role: 'user',
-        expectedManagementVersion: 1,
+        role: 'admin',
+        expectedManagementVersion: 0,
+        confirmTargetNickname: '候选人',
         requestKey: 'rk-reuse',
-      }),
+      },
+      SUPER_ENV,
+    );
+
+    const e = expectDomainError(() =>
+      setUserRole(
+        db,
+        {
+          actorUserId: admin,
+          targetUserId: target,
+          role: 'user',
+          expectedManagementVersion: 1,
+          confirmTargetNickname: '候选人',
+          requestKey: 'rk-reuse',
+        },
+        SUPER_ENV,
+      ),
     );
     expect(e.code).toBe('request_key_reused');
     // 历史未被覆盖，角色也没被这次请求改回去
@@ -382,31 +519,37 @@ describe('用户管理 · 角色变更', () => {
     expect(userRow(db, target).role).toBe('user');
   });
 
-  it('管理员改自己的角色：同样被记录审计（谁、对谁、前后角色、原因都在）', () => {
+  it('超管撤销另一名管理员：审计记下谁、对谁、前后角色、原因（且标记目标当时是否超管）', () => {
     const { db } = setup();
-    const self = insertUser(db, { nickname: '甲', role: 'admin' });
-    insertUser(db, { nickname: '乙', role: 'admin' }); // 保证不是最后一名，降级才会被允许
+    const superAdmin = insertSuperAdmin(db, '超管');
+    const other = insertUser(db, { nickname: '甲', role: 'admin' });
 
-    const result = setUserRole(db, {
-      actorUserId: self,
-      targetUserId: self,
-      role: 'user',
-      expectedManagementVersion: 0,
-      requestKey: 'rk-self-demote',
-      reason: '我要退出管理员，交给乙。',
-    });
+    const result = setUserRole(
+      db,
+      {
+        actorUserId: superAdmin,
+        targetUserId: other,
+        role: 'user',
+        expectedManagementVersion: 0,
+        confirmTargetNickname: '甲',
+        requestKey: 'rk-revoke-other',
+        reason: '他离职了，收回权限。',
+      },
+      SUPER_ENV,
+    );
 
-    expect(result.user).toMatchObject({ userId: self, role: 'user', managementVersion: 1 });
+    expect(result.user).toMatchObject({ userId: other, role: 'user', managementVersion: 1 });
 
     const audits = auditRows(db, SET_USER_ROLE_ACTION);
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({
-      operation_key: 'rk-self-demote',
-      actor_user_id: self,
-      target_id: self,
-      reason: '我要退出管理员，交给乙。',
+      operation_key: 'rk-revoke-other',
+      actor_user_id: superAdmin,
+      target_id: other,
+      reason: '他离职了，收回权限。',
     });
     expect(parseChanges(audits[0]!)).toMatchObject({
+      target_is_super_admin: false,
       from_role: 'admin',
       to_role: 'user',
       management_version_before: 0,
@@ -416,17 +559,22 @@ describe('用户管理 · 角色变更', () => {
 
   it('不给已禁用账户授予管理员（与 CLI 同口径：否则会造出"是管理员但登不进来"的空位）', () => {
     const { db } = setup();
-    const admin = insertUser(db, { nickname: '管理员', role: 'admin' });
+    const admin = insertSuperAdmin(db, '管理员');
     const asleep = insertUser(db, { nickname: '被封的', accountStatus: 'disabled' });
 
     const e = expectDomainError(() =>
-      setUserRole(db, {
-        actorUserId: admin,
-        targetUserId: asleep,
-        role: 'admin',
-        expectedManagementVersion: 0,
-        requestKey: 'rk-grant-disabled',
-      }),
+      setUserRole(
+        db,
+        {
+          actorUserId: admin,
+          targetUserId: asleep,
+          role: 'admin',
+          expectedManagementVersion: 0,
+          confirmTargetNickname: '被封的',
+          requestKey: 'rk-grant-disabled',
+        },
+        SUPER_ENV,
+      ),
     );
     expect(e.code).toBe('forbidden');
     expect(e.context?.guard).toBe('disabled_account');
@@ -684,5 +832,102 @@ describe('用户管理 · 账户状态变更', () => {
     const again = await identity.signInWithGithub(githubIdentity('repent'), Date.now());
     expect(again.created).toBe(false);
     await expect(identity.createSession(target, Date.now())).resolves.toMatchObject({ sessionId: expect.any(String) });
+  });
+});
+
+// ============================================================
+// 5) 超级管理员（部署绑定：唯一、不可剥夺、登录即生效）
+// ============================================================
+
+describe('用户管理 · 超级管理员（部署绑定）', () => {
+  it('超级管理员不可被禁用（连他自己操作也不行）', () => {
+    const { db } = setup();
+    const superAdmin = insertSuperAdmin(db, '超管');
+
+    const e = expectDomainError(() =>
+      setUserStatus(
+        db,
+        {
+          actorUserId: superAdmin,
+          targetUserId: superAdmin,
+          status: 'disabled',
+          reason: '手滑',
+          expectedAccountStatusVersion: 0,
+          requestKey: 'rk-disable-super',
+        },
+        SUPER_ENV,
+      ),
+    );
+    expect(e.code).toBe('forbidden');
+    expect(e.context?.guard).toBe('super_admin_immutable');
+    expect(userRow(db, superAdmin)).toMatchObject({ account_status: 'active', account_status_version: 0 });
+    expect(auditRows(db, SET_USER_STATUS_ACTION)).toHaveLength(0);
+  });
+
+  it('列表与 JSON 暴露 is_super_admin：只认部署配置里那一个身份', () => {
+    const { db } = setup();
+    const superAdmin = insertSuperAdmin(db, '超管');
+    const otherAdmin = insertUser(db, { nickname: '普通管理员', role: 'admin' });
+    bindGithub(db, otherAdmin, 'just-an-admin');
+
+    const users = listUsers(db, SUPER_ENV);
+    expect(users.find((u) => u.userId === superAdmin)?.isSuperAdmin).toBe(true);
+    expect(users.find((u) => u.userId === otherAdmin)?.isSuperAdmin).toBe(false);
+    expect(toUserJson(users.find((u) => u.userId === superAdmin)!)).toMatchObject({ is_super_admin: true });
+
+    // 同一份数据、未配置超管时：没有人是超管（身份由部署配置决定，不落库）
+    expect(listUsers(db, NO_SUPER_ENV).every((u) => u.isSuperAdmin === false)).toBe(true);
+  });
+
+  it('部署配置的超管身份登录即绑定为管理员；被降权后再登录仍会恢复（恒定绑定）', async () => {
+    const { db } = setup();
+    const identity = createIdentityService({ db, env: SUPER_ENV });
+
+    const first = await identity.signInWithGithub(githubIdentity(SUPER_LOGIN), Date.now());
+    expect(first.created).toBe(true);
+    expect(userRow(db, first.userId).role).toBe('admin');
+
+    // 有人（或历史遗留的直改库）把他降成 user：下次登录仍会回到管理员 ——
+    // 因为"谁是超管"是部署配置，不是可以被站内操作改掉的数据库状态。
+    db.prepare("UPDATE users SET role = 'user' WHERE id = ?").run(first.userId);
+    const again = await identity.signInWithGithub(githubIdentity(SUPER_LOGIN), Date.now());
+    expect(again.created).toBe(false);
+    expect(userRow(db, first.userId).role).toBe('admin');
+
+    // 会话解析也带出超管标志（接口层与界面据此显示"超级管理员"）
+    const session = await identity.createSession(first.userId, Date.now());
+    const resolved = await identity.resolveSession(session.token, Date.now());
+    expect(resolved).toMatchObject({ userId: first.userId, role: 'admin', isSuperAdmin: true });
+
+    // 反例：普通用户的会话里 isSuperAdmin 必须是 false
+    const normal = await identity.signInWithGithub(githubIdentity('someone-else'), Date.now());
+    const normalSession = await identity.createSession(normal.userId, Date.now());
+    await expect(identity.resolveSession(normalSession.token, Date.now())).resolves.toMatchObject({
+      isSuperAdmin: false,
+    });
+  });
+
+  it('配置写成多个 ID → 视为配置错误（fail-closed：谁都不是超管，谁都授不了权）', () => {
+    const { db } = setup();
+    const a = insertSuperAdmin(db, '超管');
+    const target = insertUser(db, { nickname: '候选人' });
+
+    const e = expectDomainError(() =>
+      setUserRole(
+        db,
+        {
+          actorUserId: a,
+          targetUserId: target,
+          role: 'admin',
+          expectedManagementVersion: 0,
+          confirmTargetNickname: '候选人',
+          requestKey: 'rk-multi-config',
+        },
+        { NODE_ENV: 'test', SUPER_ADMIN_GITHUB_ID: 'gh-super-admin, gh-另一个' },
+      ),
+    );
+    expect(e.code).toBe('forbidden');
+    expect(e.context?.guard).toBe('super_admin_required');
+    expect(e.context?.super_admin_configured).toBe(false);
   });
 });

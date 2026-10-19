@@ -109,6 +109,8 @@ export function SiteDrawer({
   onSignOut,
   onTestLogin,
   onTestAdminLogin,
+  onTestSuperAdminLogin,
+  superAdminIdentity,
 }: {
   name: string;
   subtitle: string;
@@ -122,6 +124,10 @@ export function SiteDrawer({
   onTestLogin: () => void;
   /** 以固定的**管理员测试身份**登录（是否真为管理员取决于运维是否已授权）。 */
   onTestAdminLogin: () => void;
+  /** **仅开发**：以部署绑定的超级管理员身份登录。 */
+  onTestSuperAdminLogin: () => void;
+  /** 为空表示没配 SUPER_ADMIN_GITHUB_ID，此时不显示这一行。 */
+  superAdminIdentity: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -268,6 +274,20 @@ export function SiteDrawer({
                     }}
                   >
                     {row('login', busy ? '登录中…' : '测试登录（开发）· 管理员', null)}
+                  </button>
+                ) : null}
+                {testLoginEnabled && superAdminIdentity !== null ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="menu-row"
+                    disabled={busy}
+                    onClick={() => {
+                      close();
+                      onTestSuperAdminLogin();
+                    }}
+                  >
+                    {row('login', busy ? '登录中…' : '测试登录（开发）· 超级管理员', null)}
                   </button>
                 ) : null}
               </>

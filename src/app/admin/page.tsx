@@ -63,10 +63,13 @@ export default async function AdminPage({
           {ctx.userId === null ? '未登录' : '登录账户不是管理员'}。
         </p>
         <p className="muted">
-          <strong>管理员只能在「用户管理」里由现有管理员授予/撤销，站内没有自我提权的入口。</strong>
-          第一任管理员只能上机指定：在项目根目录执行
-          <code>node scripts/grant-admin.mjs --github-login &lt;GitHub 账号&gt;</code>
-          —— 该账号需要先在站内登录过一次。<code>--list</code> 可查看现有用户与管理员。
+          <strong>授予/撤销管理员只能由超级管理员在「用户管理」里完成</strong>（还要手打对方昵称确认），
+          站内没有自我提权的入口。
+        </p>
+        <p className="muted">
+          超级管理员由<strong>部署配置</strong>绑定：在 <code>.env</code> 里把 <code>SUPER_ADMIN_GITHUB_ID</code>
+          设成他的 GitHub 数字 ID，他下次登录即成为管理员，并且这个身份在站内<strong>不可剥夺、不可转移</strong>。
+          用 <code>node scripts/set-super-admin.mjs --list</code> 可以查看当前绑定与用户。
         </p>
       </div>
     );

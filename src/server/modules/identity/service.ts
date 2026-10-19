@@ -21,6 +21,7 @@ import { withRead, withTransaction } from '@/server/platform/tx';
 import { digestText } from '@/server/platform/digest';
 import { newId, newOpaqueToken } from '@/server/platform/id';
 import { DAY, HOUR } from '@/server/platform/time';
+import { isSuperAdminProviderId } from './super-admin';
 import { err } from '@/packages/common/errors';
 import type { CallerContext } from '@/server/platform/context';
 import {
@@ -113,6 +114,29 @@ export function bootstrapAdminWithin(
   return result.changes === 1;
 }
 
+/**
+ * **部署绑定的超级管理员**：登录即（幂等地）提升为管理员。
+ *
+ * 为什么在登录时做：这样"部署时决定谁当超管"不需要任何人工上机跑脚本 ——
+ * 配好 `SUPER_ADMIN_GITHUB_ID`、该账号登录一次，绑定就生效了。
+ * 与 `bootstrapAdminWithin` 的区别：引导只在"一个管理员都没有"时生效；
+ * 超管绑定是**恒定**的（被别的管理员降过权，下次登录仍会恢复），
+ * 因为它的语义是"这个身份由部署决定"，不是"一次性引导"。
+ */
+export function bindSuperAdminWithin(
+  db: SqliteDatabase,
+  input: { userId: string; providerUserId: string; now: number; env: NodeJS.ProcessEnv },
+): boolean {
+  if (!isSuperAdminProviderId(input.providerUserId, input.env)) return false;
+  const result = db
+    .prepare(
+      `UPDATE users SET role = 'admin', management_version = management_version + 1, updated_at = ?
+        WHERE id = ? AND role = 'user' AND account_status = 'active'`,
+    )
+    .run(input.now, input.userId);
+  return result.changes === 1;
+}
+
 export function createIdentityService(deps: IdentityServiceDeps = {}): IdentityService {
   // 惰性解析：省略 deps.db 时才回退单例；显式传连接（测试）绝不触碰单例与 DSH_REVIEW_DB_PATH。
   const db: SqliteDatabase = deps.db ?? getDb();
@@ -177,6 +201,8 @@ export function createIdentityService(deps: IdentityServiceDeps = {}): IdentityS
             tx.db.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?').run(now, now, user.id);
             // 部署时指定的首个管理员（只在"一个可用管理员都没有"时生效）。
             bootstrapAdminWithin(tx.db, { userId: user.id, providerUserId: input.providerUserId, now, env });
+            // 部署绑定的超级管理员：恒定、幂等。
+            bindSuperAdminWithin(tx.db, { userId: user.id, providerUserId: input.providerUserId, now, env });
             return { userId: user.id, created: false };
           }
 
@@ -205,8 +231,9 @@ export function createIdentityService(deps: IdentityServiceDeps = {}): IdentityS
               now,
             );
 
-          // 首次登录就可能在同一个事务里被提升为首个管理员。
+          // 首次登录就可能在同一个事务里被提升为首个管理员 / 绑定为超级管理员。
           bootstrapAdminWithin(tx.db, { userId, providerUserId: input.providerUserId, now, env });
+          bindSuperAdminWithin(tx.db, { userId, providerUserId: input.providerUserId, now, env });
 
           return { userId, created: true };
         },
@@ -266,10 +293,17 @@ export function createIdentityService(deps: IdentityServiceDeps = {}): IdentityS
         if (!user) return null;
         if (user.account_status !== 'active') return null;
 
+        // 超级管理员身份**每次请求**从部署配置现算（不落库、不缓存）：
+        // 改了 SUPER_ADMIN_GITHUB_ID 并重启，绑定立刻跟着变，不需要迁移或数据修补。
+        const identity = conn
+          .prepare("SELECT provider_user_id FROM external_identities WHERE user_id = ? AND provider = 'github'")
+          .get(session.user_id) as { provider_user_id: string } | undefined;
+
         return {
           userId: user.id,
           role: user.role,
           accountStatus: user.account_status,
+          isSuperAdmin: isSuperAdminProviderId(identity?.provider_user_id ?? null, env),
           sessionId: session.id,
         };
       }, db);
