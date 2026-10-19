@@ -154,7 +154,7 @@ docker compose exec web sh             # 进容器排查（node/npx 都在）
 docker compose up -d --build           # 更新代码后重建
 docker compose restart web             # 只重启 web
 docker compose run --rm web npx tsx src/server/platform/selfcheck-cli.ts   # 结构自检
-docker compose run --rm web node scripts/grant-admin.mjs <githubId>       # 指定管理员
+docker compose run --rm web node scripts/set-super-admin.mjs --list      # 看超级管理员绑定与用户
 ```
 
 **备份**（只需一个目录）：

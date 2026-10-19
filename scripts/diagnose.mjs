@@ -131,7 +131,7 @@ if (!existsSync(dbFile)) {
         submissions: count('SELECT count(*) AS c FROM content_submissions'),
         attachments: count('SELECT count(*) AS c FROM attachments'),
       };
-      if (out.counts.admins === 0) out.problems.push('**没有任何可用管理员**（改角色请用 scripts/grant-admin.mjs）');
+      if (out.counts.admins === 0) out.problems.push('**没有任何可用管理员**（先配 SUPER_ADMIN_GITHUB_ID，再看 scripts/set-super-admin.mjs）');
 
       // —— 任务队列
       // 列名以迁移为准：processing_state / last_error_code / last_error_summary

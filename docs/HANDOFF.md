@@ -60,7 +60,7 @@ pnpm worker                         # 另开一个终端：任务与自动发现
 ```bash
 pnpm db:check                                        # 结构自检（表/索引/外键）
 pnpm db:migrate                                      # 跑到最新迁移
-node scripts/grant-admin.mjs <githubId>              # 指定管理员
+node scripts/set-super-admin.mjs --list             # 看部署绑定的超级管理员与现有用户
 DSH_ACCEPTANCE_BASE=http://127.0.0.1:3100 node scripts/acceptance-http.mjs
 DSH_ACCEPTANCE_BASE=http://127.0.0.1:3100 node scripts/acceptance-catalog-browse.mjs
 ```
@@ -69,7 +69,7 @@ DSH_ACCEPTANCE_BASE=http://127.0.0.1:3100 node scripts/acceptance-catalog-browse
 
 | 域 | 已做 |
 |---|---|
-| 身份 | GitHub OAuth（PKCE S256 + state + 浏览器绑定、一次性消费、return_path 限站内）、会话 Cookie、首个管理员引导、测试登录通道（双闸门） |
+| 身份 | GitHub OAuth（PKCE S256 + state + 浏览器绑定、一次性消费、return_path 限站内）、会话 Cookie、首个管理员引导、测试登录通道（双闸门）；**管理员分两级**：超级管理员（由 `SUPER_ADMIN_GITHUB_ID` 部署绑定、唯一、站内不可剥夺）与普通管理员（只能由超级管理员授予/撤销，且需手打对方昵称确认） |
 | 目录 | 收录检查（仓库可访问 **且** `dsh.bundle` **且** 配置文件存在）、按 (仓库, 路径) 幂等、`request_key` 去重、搜索/用途标签/是否有评测/排序/分页 |
 | 评测 | 草稿（乐观并发 `saveVersion`）、提交 → 规则校验 → 内容筛查 → 人工审核 → 发布、修订快照不可改写、撤回、公开性判定单一真相 |
 | 评论 | 顶层讨论组 + 回复、盖楼规则、可见性跟随内容、作者可改可删、频控（5 次/分/用户，合并计数） |
@@ -129,6 +129,9 @@ DSH_ACCEPTANCE_BASE=http://127.0.0.1:3100 node scripts/acceptance-catalog-browse
 - **错误码与状态码稳定**，中文文案可改；前端按 `code` 分支，不匹配文案。
 - **迁移是向前、编号、事务内**；不写"先收录再说"这类宽松路径。
 - **未配置外部依赖时明确报错，不伪装可用**（GitHub 登录、内容筛查都是这个口径）。
+- **dev 的日志/临时文件不要放项目目录内**：Next dev 的文件监视会把它们当成代码变更，
+  触发整页重载死循环（现象是页面一直闪、导航停在"正在读取登录状态…"，详见 §14）。
+  本地起服务用 `bash scripts/dev-8080.sh`：它默认写项目外，并会拒绝落在项目内的路径。
 
 ## 8. 关于旧文档
 
@@ -199,8 +202,10 @@ DSH_ACCEPTANCE_BASE=http://127.0.0.1:3100 node scripts/acceptance-catalog-browse
    请到 GitHub → Settings → Developer settings → OAuth Apps → 该 App，把
    **Authorization callback URL** 改成这个地址（Homepage URL 建议同步改成 `https://review.lingshulab.com`）。
    改完直接点站点右上角「登录」即可。
-2. **首个管理员**：`BOOTSTRAP_ADMIN_GITHUB_ID` 已按本地配置写入；**当站内一个管理员都没有时**，
-   该 GitHub 数字 ID 首次登录即被提升为管理员（用户名不算数，只看数字 ID）。
+2. **超级管理员**：`SUPER_ADMIN_GITHUB_ID` 填部署者的 GitHub **数字 ID** 即可 ——
+   该身份首次登录会被自动提升为管理员，之后**只有他**能授予/撤销管理员（要手打对方昵称确认）。
+   他的权限站内不可剥夺、不可转移；换人只能改这一行 + 重启。
+   （`BOOTSTRAP_ADMIN_GITHUB_ID` 仍保留，但只是"一个管理员都没有"时的一次性引导。）
 3. （可选）加只读 `GITHUB_TOKEN`：单轮发现从约 4 个提到约 30 个候选、请求预算 58 → 400。
 
 ---
@@ -243,3 +248,41 @@ gitignore 的目录规则匹配**任意层级**，于是 `src/app/api/admin/back
 
 修法：改成 `/backups/`（只忽略仓库根那一个），并在 `.gitignore` 里留注释说明。
 教训：`git status` 里**没看到**新文件时别默认"忘了 add"，先 `git check-ignore -v <path>` 问一句。
+
+---
+
+## 14. 2026-10-19：dev 日志写在项目内 → 整页重载死循环（页面一直闪）
+
+### 14.1 现象
+
+页面卡在「正在读取登录状态…」并且不停闪。**服务端一切正常**：接口全 200、日志没有任何报错、
+`/_next/*` 资源也能取到 —— 从服务端自检完全看不出问题。
+
+### 14.2 根因
+
+本地 dev 服务的 stdout/stderr 被重定向到了**项目目录内**的 `.data/server-8080.log`。
+Next dev（Turbopack）监视项目文件，于是形成自激循环：
+
+> 请求进来 → 访问日志多一行 → 监视器判定"文件变了" → 重新编译（`✓ Compiled in 1ms`）
+> → **整页重载** → 浏览器又发一个请求 → 日志又多一行 → ……
+
+周期约 1~2 秒，表现就是"一直闪"。
+
+### 14.3 实测证据
+
+| 日志位置 | 完全空闲时的观察 |
+|---|---|
+| 项目内 `.data/server-8080.log` | 8 秒新增 **76 行**（`GET /` + `/api/session` + `Compiled` 反复出现） |
+| 项目外 `/root/dsh-review-dev-8080.log` | 20 秒新增 **0 行** |
+
+中途重启过一次 dev（日志仍在项目内），循环照旧 —— 差异在**日志位置**，不是"重启治百病"。
+注意 `.data/` 虽然被 gitignore，**仍然会触发监视**。
+
+### 14.4 规矩
+
+1. dev 的日志、临时文件、探针文件**一律放项目外**。
+2. 本地起服务用 `bash scripts/dev-8080.sh`：默认写 `/root/dsh-review-dev-8080.log`，
+   并且**拒绝**日志路径落在项目内的配置（把这条教训写进了脚本里）。
+3. 判据：**在完全空闲的窗口里，dev 日志还在长，就说明有东西在自激**。
+4. 这类问题**只在浏览器侧显现**，服务端接口永远是 200；排查顺序是先看"无人操作却持续增长的
+   请求/编译"，再看浏览器 Console。

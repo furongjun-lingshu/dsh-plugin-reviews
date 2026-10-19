@@ -97,7 +97,7 @@
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| GET | `/api/session` | 公开 | 会话状态：`authenticated` / `nickname` / `role` / `accountStatus` / `githubLoginConfigured` / `testLoginEnabled` |
+| GET | `/api/session` | 公开 | 会话状态：`authenticated` / `nickname` / `role` / `accountStatus` / `isSuperAdmin` / `superAdminConfigured` / `githubLoginConfigured` / `testLoginEnabled`（+`testSuperAdminIdentity`，仅开发通道打开时下发） |
 | DELETE | `/api/session` | 登录 | 退出登录（清会话 Cookie）。**不接受请求体身份**：早期那条 HTTP 登录旁路已删除 |
 | GET | `/api/auth/github/start` | 公开 | 发起 GitHub 登录（PKCE S256 + state；未配置凭据时明确报 503，不伪装可用） |
 | GET | `/api/auth/github/callback` | 公开 | 登录回调；新用户 302 到 `/onboarding?returnTo=…` |
@@ -166,7 +166,7 @@
 | POST | `/api/admin/submissions/{submissionId}/decisions` | 人工审核决定（批准 / 要求修改），带 `expectedStateVersion` 防并发覆盖 |
 | POST | `/api/admin/content/{contentId}/visibility` | 隐藏 / 取消隐藏内容（记原因） |
 | GET | `/api/admin/users` | 用户列表（管理员在前） |
-| PATCH | `/api/admin/users/{userId}` | 改角色或账户状态（body 里区分） |
+| PATCH | `/api/admin/users/{userId}` | 改角色或账户状态（body 里区分）。**改角色（授予/撤销管理员）是超级管理员专属**：非超管 403（`context.guard=super_admin_required`），且必须带 `confirm_target_nickname`（原样重复目标昵称），缺失或不一致 400；**超级管理员本人不可被降级/禁用**（403 `super_admin_immutable`） |
 | GET | `/api/admin/settings` | 读业务配置（频控额度、自动发现开关等） |
 | PUT | `/api/admin/settings` | 改业务配置（记修改记录） |
 | GET | `/api/admin/discovery` | 自动发现状态 |
