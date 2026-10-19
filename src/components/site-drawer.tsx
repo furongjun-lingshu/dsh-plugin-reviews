@@ -108,6 +108,7 @@ export function SiteDrawer({
   testLoginEnabled,
   onSignOut,
   onTestLogin,
+  onTestAdminLogin,
 }: {
   name: string;
   subtitle: string;
@@ -119,6 +120,8 @@ export function SiteDrawer({
   testLoginEnabled: boolean;
   onSignOut: () => void;
   onTestLogin: () => void;
+  /** 以固定的**管理员测试身份**登录（是否真为管理员取决于运维是否已授权）。 */
+  onTestAdminLogin: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -251,6 +254,20 @@ export function SiteDrawer({
                     }}
                   >
                     {row('login', busy ? '登录中…' : '测试登录（开发）', null)}
+                  </button>
+                ) : null}
+                {testLoginEnabled ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="menu-row"
+                    disabled={busy}
+                    onClick={() => {
+                      close();
+                      onTestAdminLogin();
+                    }}
+                  >
+                    {row('login', busy ? '登录中…' : '测试登录（开发）· 管理员', null)}
                   </button>
                 ) : null}
               </>

@@ -68,13 +68,22 @@ export function SessionNav() {
     void loadSession();
   }, [loadSession]);
 
-  /** 测试登录：只在开关打开时可用。 */
-  const signInForTest = async () => {
+  /**
+   * 测试登录：只在服务端开关打开时可用（生产恒为 false）。
+   *
+   * `asAdmin` 走另一个**固定测试身份** `local-admin`。注意管理员**不能**靠登录产生：
+   * 站内没有任何自提权入口（这是刻意的），所以这个身份需要运维先用
+   * `node scripts/grant-admin.mjs --github-login local-admin` 授予一次管理员。
+   * 没授予时它就是一个普通用户 —— 界面如实反映，不做隐式提权。
+   */
+  const signInForTest = async (asAdmin = false) => {
     setBusy(true);
     try {
       await apiFetch('/api/testing/session', {
         method: 'POST',
-        json: { providerUserId: 'local-dev-user', providerUsername: 'local-dev' },
+        json: asAdmin
+          ? { providerUserId: 'local-admin', providerUsername: 'local-admin', displayName: '本地管理员' }
+          : { providerUserId: 'local-dev-user', providerUsername: 'local-dev' },
       });
       await loadSession();
     } catch (e) {
@@ -145,6 +154,7 @@ export function SessionNav() {
               testLoginEnabled={session.testLoginEnabled}
               busy={busy}
               onTestLogin={() => void signInForTest()}
+              onTestAdminLogin={() => void signInForTest(true)}
             />
           )}
           {/*
@@ -170,6 +180,7 @@ export function SessionNav() {
             testLoginEnabled={session?.testLoginEnabled === true}
             onSignOut={() => void signOut()}
             onTestLogin={() => void signInForTest()}
+            onTestAdminLogin={() => void signInForTest(true)}
           />
         </div>
       </nav>

@@ -18,11 +18,14 @@ export function SignInMenu({
   testLoginEnabled,
   busy,
   onTestLogin,
+  onTestAdminLogin,
 }: {
   githubConfigured: boolean;
   testLoginEnabled: boolean;
   busy: boolean;
   onTestLogin: () => void;
+  /** 以固定的**管理员测试身份**登录（该身份是否真为管理员，取决于运维是否已授权）。 */
+  onTestAdminLogin: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -88,6 +91,18 @@ export function SignInMenu({
                 }}
               >
                 <span className="menu-row-label">{busy ? '登录中…' : '测试登录（开发）'}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="menu-row"
+                disabled={busy}
+                onClick={() => {
+                  setOpen(false);
+                  onTestAdminLogin();
+                }}
+              >
+                <span className="menu-row-label">{busy ? '登录中…' : '测试登录（开发）· 管理员'}</span>
               </button>
             </>
           ) : null}
