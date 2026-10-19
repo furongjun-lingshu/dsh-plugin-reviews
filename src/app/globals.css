@@ -1044,8 +1044,16 @@ label {
   display: flex;
   justify-content: space-between;
   gap: var(--space-2);
+  /* ⚠️ 必须显式 min-width: 0：.side-nav 是 grid，行是 grid item，
+     默认 min-width:auto 会让「轨道最小宽度 = 内容最小宽度」；
+     而标签用 .truncate（white-space:nowrap），min-content 就是整串文字，
+     于是长标签（context-engineering）直接把 240px 的侧栏撑破、背景和计数溢出到面板外。
+     给它 0 之后轨道才会收缩，行里的 .truncate 才真的出现省略号。 */
+  min-width: 0;
 }
 .side-nav .count {
+  /* 计数永远不参与压缩：宁可标签截断，也不能让数字被挤掉或换行 */
+  flex: 0 0 auto;
   color: var(--faint);
   font-size: 12px;
 }
@@ -1635,6 +1643,26 @@ button:not(:disabled):active,
 /* 列表条目 hover：给一点底色，提示"这一行可以点" */
 .item-list > .item:hover {
   background-color: color-mix(in srgb, var(--md-sys-color-primary) 5%, transparent);
+}
+
+/* 整卡可点（stretched link）：行 hover 已经给了"这一行能点"的底色，
+   但过去真正可点的只有标题那几个字 —— 看起来能点、点其他地方没反应。
+   做法：卡片 position:relative，标题链接的 ::after 铺满整张卡。
+   ⚠️ 标题链接本身**不能**设 position —— 一旦设了，::after 的 inset:0 会相对它自身解析，
+   热区又缩回文字大小（这是 stretched link 最常踩的坑）。
+   卡片内其他可点元素（元信息里的插件链接、按钮）必须抬到热区之上，否则点不到。 */
+.item-clickable {
+  position: relative;
+}
+.item-clickable .item-body h3 a::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.item-clickable .list-meta a,
+.item-clickable button {
+  position: relative;
+  z-index: 1;
 }
 
 /* 读屏专用：视觉上不可见，但读屏与"跳过动画"的用户仍然听得到。
@@ -2739,6 +2767,9 @@ input[type='search']:focus {
     /* 与筛选 chip / .tag 完全同一套标准（之前这里还留着 8px 纵向内边距 → 36px 高，偏大） */
     display: inline-flex;
     align-items: center;
+    /* 手机端是横向 chip 行：长标签同样要能压缩到容器内（不然会横向溢出面板） */
+    max-width: 100%;
+    min-width: 0;
     height: var(--chip-height);
     padding: 0 var(--chip-padding-x);
     border-radius: var(--md-sys-shape-corner-small);

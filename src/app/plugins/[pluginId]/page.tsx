@@ -104,7 +104,7 @@ export default async function PluginDetailPage({ params }: { params: Promise<{ p
             ) : (
               <ul className="item-list">
                 {reviews.map((r) => (
-                  <li key={r.review_id} className="item">
+                  <li key={r.review_id} className="item item-clickable">
                     <div className="item-body">
                       <h3>
                         <Link href={`/reviews/${r.review_id}`}>{r.title}</Link>

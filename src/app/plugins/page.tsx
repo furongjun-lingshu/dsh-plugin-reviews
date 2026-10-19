@@ -69,7 +69,7 @@ function PluginCard({ plugin }: { plugin: PluginSummary }) {
   const initial = (plugin.displayName ?? plugin.repositoryFullName).slice(0, 1).toUpperCase();
 
   return (
-    <li className="item">
+    <li className="item item-clickable">
       {/* 图标：有 owner 头像就用（外链，不代理），否则用首字母方块兜底 */}
       <span className="icon">
         {plugin.ownerAvatarUrl ? (
@@ -166,10 +166,12 @@ export default async function PluginsPage({
                 <span>全部</span>
               </Link>
               {tags.map((t) => (
+                // 标签可能被省略号截断 —— 悬停给出完整名字，信息不丢
                 <Link
                   key={t.tag}
                   href={listHref(conditions, { tag: t.tag })}
                   className={conditions.tag === t.tag ? 'active' : ''}
+                  title={t.tag === UNCLASSIFIED_TAG ? '未分类' : t.tag}
                 >
                   <span className="truncate">{t.tag === UNCLASSIFIED_TAG ? '未分类' : t.tag}</span>
                   <span className="count">{t.pluginCount}</span>

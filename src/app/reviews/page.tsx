@@ -146,7 +146,7 @@ export default async function ReviewsPage({
                   {items.map((r) => {
                     const label = pluginLabel(r);
                     return (
-                      <li key={r.review_id} className="item">
+                      <li key={r.review_id} className="item item-clickable">
                         <div className="item-body">
                           {/*
                             两列：左边来源标签，右边"标题 + 元信息"。

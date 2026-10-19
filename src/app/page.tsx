@@ -129,7 +129,7 @@ export default async function HomePage() {
           ) : (
             <ul className="item-list">
               {reviews.map((r) => (
-                <li key={r.review_id} className="item">
+                <li key={r.review_id} className="item item-clickable">
                   <div className="item-body">
                     {/* 两列：来源标签 +（标题 + 元信息），元信息与标题同列（与评测列表一致） */}
                     <div className="item-head">
@@ -177,7 +177,7 @@ export default async function HomePage() {
                 {recentPlugins.items.map((p) => {
                   const initial = (p.displayName ?? p.repositoryFullName).slice(0, 1).toUpperCase();
                   return (
-                    <li key={p.pluginId} className="item">
+                    <li key={p.pluginId} className="item item-clickable">
                       <span className="icon">
                         {p.ownerAvatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -187,7 +187,9 @@ export default async function HomePage() {
                         )}
                       </span>
                       <div className="item-body">
-                        <h3 className="truncate">{p.displayName ?? p.repositoryFullName}</h3>
+                        <h3 className="truncate">
+                          <Link href={`/plugins/${p.pluginId}`}>{p.displayName ?? p.repositoryFullName}</Link>
+                        </h3>
                         <p className="clamp-2" style={{ color: 'var(--muted)', fontSize: 14 }}>
                           {p.description ?? '暂无简介'}
                         </p>

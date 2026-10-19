@@ -129,7 +129,7 @@ export default async function MePage() {
             ) : (
               <ul className="item-list">
                 {drafts.map((d) => (
-                  <li key={d.draft_id} className="item">
+                  <li key={d.draft_id} className="item item-clickable">
                     <div className="item-body">
                       <h3>
                         <Link href={`/me/drafts/${d.draft_id}`}>
@@ -162,7 +162,7 @@ export default async function MePage() {
                   const kind = s.submission_type === 'comment_revision' ? '评论' : '评测';
                   const linkable = s.review_id !== null && s.has_public_revision === 1;
                   return (
-                    <li key={s.submission_id} className="item">
+                    <li key={s.submission_id} className="item item-clickable">
                       <div className="item-body">
                         <h3>
                           {linkable ? (
