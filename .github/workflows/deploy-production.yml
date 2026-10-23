@@ -1,0 +1,71 @@
+name: Deploy production
+
+# 每次合并进 main（push 事件）自动部署到 5.231.26.36。
+# 手动重跑：Actions → Deploy production → Run workflow。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一时间只允许一个部署；后到的排队，不取消正在进行的发布。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # 只在主仓库跑：别人 fork 出来的 main 不会碰生产服务器。
+    if: github.repository == 'furongjun-lingshu/dsh-plugin-reviews'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build source archive
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/dsh-deploy-${GITHUB_SHA}.tar.gz"
+          # 只打包受版本控制的文件：.env / data / backups 永远不进包
+          git archive --format=tar.gz -o "$ARCHIVE" HEAD
+          test -s "$ARCHIVE"
+          tar -tzf "$ARCHIVE" | grep -qx 'docker/compose.yaml'
+          echo "archive $(du -h "$ARCHIVE" | cut -f1)"
+
+      - name: Prepare SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_SSH_KEY}" ]; then
+            echo "::error::仓库 Secret DEPLOY_SSH_KEY 未配置，无法部署。请把 deploy 私钥内容加进 Settings → Secrets and variables → Actions。"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # 主机公钥固定在仓库里（deploy/known_hosts），不做 ssh-keyscan，避免中间人替换
+          install -m 644 deploy/known_hosts ~/.ssh/known_hosts
+
+      - name: Upload release archive
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            "$RUNNER_TEMP/dsh-deploy-${GITHUB_SHA}.tar.gz" \
+            root@5.231.26.36:/tmp/
+
+      - name: Deploy on server
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            root@5.231.26.36 \
+            "bash -s -- /tmp/dsh-deploy-${GITHUB_SHA}.tar.gz ${GITHUB_SHA:0:7}" \
+            < deploy/deploy-remote.sh
