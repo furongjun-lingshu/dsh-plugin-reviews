@@ -1,16 +1,18 @@
 'use client';
 
 /**
- * 页码跳转：双击「当前页 / 总页数」变成输入框，回车跳到目标页。
+ * 页码跳转：输入页码 + 「跳转」按钮（在「下一页」左侧）。
  *
- * 为什么不用一直点「下一页」：页数多时翻到中间很累（主人要求）。
- * 双击进入编辑；回车提交、Esc 或失焦取消；键盘聚焦后按 Enter/空格也能进入编辑。
+ * 与旧版（双击页码、clamp 到总页数）的区别：
+ *  - 显式的输入框 + 按钮，用户不用猜双击；
+ *  - **不 clamp**：越界页照常导航，由服务端显示「您输入的页面不存在」；
+ *  - 非数字 / 小于 1 在客户端拦下并提示，不发请求。
  *
  * 链接由服务端给一个带 `__PAGE__` 占位符的模板（保留当前筛选条件），
  * 客户端只替换页码，不重新拼查询串。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 
 /** 占位符不能用 `{page}`：URLSearchParams 会把花括号编码成 %7B%7D。 */
@@ -27,76 +29,49 @@ export function PageJump({
   hrefTemplate: string;
 }) {
   const router = useRouter();
-  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(page));
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!editing) return;
-    setDraft(String(page));
-    const frame = requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [editing, page]);
-
-  const begin = () => setEditing(true);
-
-  const commit = () => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     const parsed = Number.parseInt(draft, 10);
-    const target = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), totalPages) : page;
-    setEditing(false);
-    if (target !== page) {
-      router.push(hrefTemplate.replace(PAGE_PLACEHOLDER, String(target)));
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setError('请输入有效页码');
+      return;
     }
+    setError(null);
+    router.push(hrefTemplate.replace(PAGE_PLACEHOLDER, String(parsed)));
   };
 
-  if (editing) {
-    return (
-      <span className="page-now">
-        <input
-          ref={inputRef}
-          className="page-jump-input"
-          type="number"
-          inputMode="numeric"
-          min={1}
-          max={totalPages}
-          value={draft}
-          aria-label={`跳转到页码，1 到 ${totalPages}`}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              commit();
-            }
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              setEditing(false);
-            }
-          }}
-          onBlur={() => setEditing(false)}
-        />
-        <span> / {totalPages}</span>
-      </span>
-    );
-  }
-
   return (
-    <span
-      className="page-now page-jump-trigger"
-      role="button"
-      tabIndex={0}
-      title="双击输入页码"
-      onDoubleClick={begin}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          begin();
-        }
-      }}
+    <form
+      onSubmit={submit}
+      style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
     >
-      {page} / {totalPages}
-    </span>
+      <label htmlFor={`page-jump-${page}`} className="muted" style={{ fontSize: 13 }}>
+        跳转到
+      </label>
+      <input
+        id={`page-jump-${page}`}
+        className="page-jump-input"
+        type="number"
+        inputMode="numeric"
+        value={draft}
+        aria-label={`输入页码（共 ${totalPages} 页）`}
+        onChange={(event) => setDraft(event.target.value)}
+        style={{ width: 72 }}
+      />
+      <span className="muted" style={{ fontSize: 13 }}>
+        页
+      </span>
+      <button type="submit" className="button">
+        跳转
+      </button>
+      {error ? (
+        <span role="alert" style={{ fontSize: 12, color: 'var(--md-sys-color-error, #b3261e)' }}>
+          {error}
+        </span>
+      ) : null}
+    </form>
   );
 }

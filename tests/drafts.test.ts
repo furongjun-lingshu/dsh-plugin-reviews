@@ -667,6 +667,44 @@ describe('listDraftSummaries：标题取当前草稿载荷', () => {
     expect(list[0].title).toBe('还没提交的标题');
   });
 
+  it('按标题关键词过滤（关键词里的 % 不会变成通配符）', async () => {
+    const { db } = setup();
+    const author = insertUser(db);
+    const repo = insertRepository(db);
+    const p1 = insertPlugin(db, repo);
+    const p2 = insertPlugin(db, repo, 'sub');
+    const d1 = await reviewsService.createOrGetDraft(
+      caller(author),
+      { pluginId: p1, requestKey: 'q-draft-1' },
+      db,
+    );
+    const d2 = await reviewsService.createOrGetDraft(
+      caller(author),
+      { pluginId: p2, requestKey: 'q-draft-2' },
+      db,
+    );
+    await reviewsService.saveDraft(
+      caller(author),
+      { draftId: d1.draftId, expectedVersion: 0, requestKey: 'q-s1', payload: payload({ title: '记忆插件测评' }) },
+      db,
+    );
+    await reviewsService.saveDraft(
+      caller(author),
+      { draftId: d2.draftId, expectedVersion: 0, requestKey: 'q-s2', payload: payload({ title: '天气插件测评' }) },
+      db,
+    );
+
+    const hit = await listDraftSummaries(caller(author), db, '记忆');
+    expect(hit.map((d) => d.title)).toEqual(['记忆插件测评']);
+
+    // % 按字面量匹配：没有标题包含 %，所以结果为空（如果没转义会命中全部）。
+    const wildcard = await listDraftSummaries(caller(author), db, '%');
+    expect(wildcard).toHaveLength(0);
+
+    const all = await listDraftSummaries(caller(author), db, '');
+    expect(all).toHaveLength(2);
+  });
+
   it('只返回本人草稿', async () => {
     const { db } = setup();
     const author = insertUser(db);
@@ -708,7 +746,7 @@ describe('deleteDraft：删除草稿时按需撤回评测', () => {
   /** 造一份已提交（并可选已发布）的草稿。 */
   async function makeSubmittedDraft(
     db: TestDb['db'],
-    opts: { publish: boolean },
+    opts: { publish: boolean; restoreDraft?: boolean },
   ): Promise<{ author: string; draftId: string; reviewId: string; revisionId: string }> {
     const author = insertUser(db);
     const repo = insertRepository(db);
@@ -741,6 +779,11 @@ describe('deleteDraft：删除草稿时按需撤回评测', () => {
         created.reviewId,
       );
     }
+    // submitReview 现在会在提交后软删除草稿；删除草稿的用例需要草稿仍然存在，
+    // 默认恢复它。提交后自动移除由下面单独的用例覆盖。
+    if (opts.restoreDraft !== false) {
+      db.prepare('UPDATE content_drafts SET deleted_at = NULL WHERE id = ?').run(created.draftId);
+    }
     return {
       author,
       draftId: created.draftId,
@@ -749,18 +792,18 @@ describe('deleteDraft：删除草稿时按需撤回评测', () => {
     };
   }
 
-  it('已发布：删除草稿会撤回评测，并软删除草稿；提交记录保留', async () => {
+  it('已发布：删除草稿只删草稿，不撤回评测；提交记录保留', async () => {
     const { db } = setup();
     const fixture = await makeSubmittedDraft(db, { publish: true });
 
     const result = await reviewsService.deleteDraft(caller(fixture.author), fixture.draftId, db);
-    expect(result.withdrawn).toBe(true);
+    expect(result.withdrawn).toBe(false);
 
     const entity = db
       .prepare('SELECT withdrawn_at, withdrawal_reason FROM content_entities WHERE id = ?')
       .get(fixture.reviewId) as { withdrawn_at: number | null; withdrawal_reason: string | null };
-    expect(entity.withdrawn_at).not.toBeNull();
-    expect(entity.withdrawal_reason).toContain('删除草稿');
+    expect(entity.withdrawn_at).toBeNull();
+    expect(entity.withdrawal_reason).toBeNull();
 
     const draft = db
       .prepare('SELECT deleted_at, review_id FROM content_drafts WHERE id = ?')
@@ -817,7 +860,7 @@ describe('deleteDraft：删除草稿时按需撤回评测', () => {
     expect(review.c).toBe(0);
   });
 
-  it('批量删除：已发布的一并撤回，计数正确；未提交的物理删除', async () => {
+  it('批量删除：只删草稿，不撤回任何评测；未提交的物理删除', async () => {
     const { db } = setup();
     const fixture = await makeSubmittedDraft(db, { publish: true });
     const author = fixture.author;
@@ -830,12 +873,12 @@ describe('deleteDraft：删除草稿时按需撤回评测', () => {
     );
 
     const result = await reviewsService.deleteDrafts(caller(author), [fixture.draftId, plain.draftId], db);
-    expect(result).toEqual({ deleted: 2, withdrawn: 1 });
+    expect(result).toEqual({ deleted: 2, withdrawn: 0 });
 
     const entity = db
       .prepare('SELECT withdrawn_at FROM content_entities WHERE id = ?')
       .get(fixture.reviewId) as { withdrawn_at: number | null };
-    expect(entity.withdrawn_at).not.toBeNull();
+    expect(entity.withdrawn_at).toBeNull();
     const plainRow = db.prepare('SELECT count(*) AS c FROM content_drafts WHERE id = ?').get(plain.draftId) as { c: number };
     expect(plainRow.c).toBe(0);
   });
@@ -898,5 +941,60 @@ describe('deleteDraft：删除草稿时按需撤回评测', () => {
 
     const second = await reviewsService.deleteDraftByReview(caller(fixture.author), fixture.reviewId, db);
     expect(second).toEqual({ deleted: false, withdrawn: false });
+  });
+
+  it('提交后草稿从草稿区移除（软删除），提交记录仍保留', async () => {
+    const { db } = setup();
+    const fixture = await makeSubmittedDraft(db, { publish: true, restoreDraft: false });
+
+    const draft = db
+      .prepare('SELECT deleted_at FROM content_drafts WHERE id = ?')
+      .get(fixture.draftId) as { deleted_at: number | null };
+    expect(draft.deleted_at).not.toBeNull();
+
+    const list = await listDraftSummaries(caller(fixture.author), db);
+    expect(list).toHaveLength(0);
+
+    const sub = db
+      .prepare('SELECT count(*) AS c FROM content_submissions WHERE review_revision_id = ?')
+      .get(fixture.revisionId) as { c: number };
+    expect(sub.c).toBe(1);
+  });
+
+  it('createOrGetRevisionDraft：作者从已发布评测创建修改草稿，复制内容且可复用', async () => {
+    const { db } = setup();
+    const fixture = await makeSubmittedDraft(db, { publish: true, restoreDraft: false });
+
+    const created = await reviewsService.createOrGetRevisionDraft(
+      caller(fixture.author),
+      fixture.reviewId,
+      db,
+    );
+    const again = await reviewsService.createOrGetRevisionDraft(
+      caller(fixture.author),
+      fixture.reviewId,
+      db,
+    );
+    expect(again.draftId).toBe(created.draftId);
+
+    const draft = db
+      .prepare('SELECT payload, save_version FROM content_drafts WHERE id = ?')
+      .get(created.draftId) as { payload: string; save_version: number };
+    const payload = JSON.parse(draft.payload) as DraftPayload;
+    expect(payload.title).toBe('一篇测试评测');
+    expect(payload.verdict).toBe('untestable');
+    expect(payload.assessmentLevel).toBe('standard');
+    expect(payload.body.map((s) => s.markdown).join('\n\n')).toContain('用于测试删除草稿');
+    expect(draft.save_version).toBe(0);
+  });
+
+  it('createOrGetRevisionDraft：非作者被拒', async () => {
+    const { db } = setup();
+    const fixture = await makeSubmittedDraft(db, { publish: true, restoreDraft: false });
+    const other = insertUser(db);
+    await expectCode(
+      reviewsService.createOrGetRevisionDraft(caller(other), fixture.reviewId, db),
+      ErrorCodes.FORBIDDEN,
+    );
   });
 });

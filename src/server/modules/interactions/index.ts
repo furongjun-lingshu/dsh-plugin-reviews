@@ -55,6 +55,16 @@ export interface FavoritePluginView {
   pluginPath: string;
   isArchived: boolean;
   createdAt: number;
+  folderId: string;
+  folderName: string;
+}
+
+export interface FavoriteFolderView {
+  folderId: string;
+  name: string;
+  isDefault: boolean;
+  count: number;
+  createdAt: number;
 }
 
 export interface ReportView {
@@ -82,6 +92,37 @@ export interface HandleReportResult {
 }
 
 const EXCERPT_MAX = 120;
+
+/** 默认收藏夹的固定名称（服务端创建，唯一）。 */
+export const DEFAULT_FAVORITE_FOLDER_NAME = '默认收藏夹';
+
+/**
+ * 确保用户存在默认收藏夹；历史收藏（folder_id IS NULL）回填进来。
+ * 必须在事务内调用（会写库）。
+ */
+function ensureDefaultFolderInTx(conn: SqliteDatabase, userId: string): { id: string } {
+  const existing = conn
+    .prepare('SELECT id FROM favorite_folders WHERE user_id = ? AND is_default = 1')
+    .get(userId) as { id: string } | undefined;
+  if (existing) {
+    conn
+      .prepare('UPDATE plugin_favorites SET folder_id = ? WHERE user_id = ? AND folder_id IS NULL')
+      .run(existing.id, userId);
+    return existing;
+  }
+  const id = newId();
+  const now = nowMs();
+  conn
+    .prepare(
+      `INSERT INTO favorite_folders (id, user_id, name, is_default, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?)`,
+    )
+    .run(id, userId, DEFAULT_FAVORITE_FOLDER_NAME, now, now);
+  conn
+    .prepare('UPDATE plugin_favorites SET folder_id = ? WHERE user_id = ? AND folder_id IS NULL')
+    .run(id, userId);
+  return { id };
+}
 
 /** 目标是否存在且"当前公开"——决定能不能投票/举报。 */
 function assertTargetPublic(db: SqliteDatabase, target: { kind: ReportTargetKind; id: string }): string {
@@ -235,10 +276,232 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
           conn.prepare('DELETE FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?').run(userId, input.targetId);
           return { favorited: false };
         }
+        const folder = ensureDefaultFolderInTx(conn, userId);
         conn
-          .prepare('INSERT INTO plugin_favorites (user_id, plugin_id, created_at) VALUES (?, ?, ?)')
-          .run(userId, input.targetId, nowMs());
+          .prepare(
+            'INSERT INTO plugin_favorites (user_id, plugin_id, folder_id, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(userId, input.targetId, folder.id, nowMs());
         return { favorited: true };
+      }, injectedDb ?? db);
+    },
+
+    /** 收藏到指定收藏夹（未指定则默认夹）；已收藏则移动。 */
+    async setFavorite(
+      ctx: CallerContext,
+      input: { pluginId: string; folderId?: string | null },
+      injectedDb?: SqliteDatabase,
+    ): Promise<{ favorited: true; folderId: string }> {
+      assertCanWrite(ctx);
+      const userId = ctx.userId;
+      return withTransaction((tx) => {
+        const conn = tx.db;
+        const plugin = conn.prepare('SELECT id FROM plugins WHERE id = ?').get(input.pluginId);
+        if (!plugin) throw err.unavailable('要收藏的插件不存在。');
+
+        const defaultFolder = ensureDefaultFolderInTx(conn, userId);
+        const folderId = input.folderId ?? defaultFolder.id;
+        const folder = conn
+          .prepare('SELECT id FROM favorite_folders WHERE id = ? AND user_id = ?')
+          .get(folderId, userId);
+        if (!folder) throw err.input('收藏夹不存在。', [{ path: 'folderId', message: '未知收藏夹' }]);
+
+        conn
+          .prepare(
+            `INSERT INTO plugin_favorites (user_id, plugin_id, folder_id, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id, plugin_id)
+             DO UPDATE SET folder_id = excluded.folder_id, created_at = excluded.created_at`,
+          )
+          .run(userId, input.pluginId, folderId, nowMs());
+        return { favorited: true as const, folderId };
+      }, injectedDb ?? db);
+    },
+
+    /** 取消收藏（不关心在哪个收藏夹）。 */
+    async removeFavorite(
+      ctx: CallerContext,
+      pluginId: string,
+      injectedDb?: SqliteDatabase,
+    ): Promise<{ favorited: false }> {
+      assertCanWrite(ctx);
+      const userId = ctx.userId;
+      return withTransaction((tx) => {
+        tx.db.prepare('DELETE FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?').run(userId, pluginId);
+        return { favorited: false as const };
+      }, injectedDb ?? db);
+    },
+
+    /** 收藏夹列表（含每夹收藏数）；首次访问时创建默认夹。 */
+    async listFavoriteFolders(
+      ctx: CallerContext,
+      injectedDb?: SqliteDatabase,
+    ): Promise<FavoriteFolderView[]> {
+      if (ctx.userId === null) throw err.unauthenticated();
+      const userId = ctx.userId;
+      return withTransaction((tx) => {
+        ensureDefaultFolderInTx(tx.db, userId);
+        const rows = tx.db
+          .prepare(
+            `SELECT f.id, f.name, f.is_default, f.created_at,
+                    (SELECT COUNT(*) FROM plugin_favorites pf WHERE pf.folder_id = f.id) AS c
+               FROM favorite_folders f
+              WHERE f.user_id = ?
+              ORDER BY f.is_default DESC, f.created_at ASC, f.id ASC`,
+          )
+          .all(userId) as Array<{
+          id: string;
+          name: string;
+          is_default: number;
+          created_at: number;
+          c: number;
+        }>;
+        return rows.map((r) => ({
+          folderId: r.id,
+          name: r.name,
+          isDefault: r.is_default === 1,
+          count: Number(r.c),
+          createdAt: r.created_at,
+        }));
+      }, injectedDb ?? db);
+    },
+
+    /** 新建收藏夹（不能重名；1-40 字）。 */
+    async createFavoriteFolder(
+      ctx: CallerContext,
+      name: string,
+      injectedDb?: SqliteDatabase,
+    ): Promise<FavoriteFolderView> {
+      assertCanWrite(ctx);
+      const userId = ctx.userId;
+      const trimmed = typeof name === 'string' ? name.trim() : '';
+      if (trimmed.length === 0 || trimmed.length > 40) {
+        throw err.input('收藏夹名称需为 1-40 个字。', [{ path: 'name', message: '长度不合法' }]);
+      }
+      return withTransaction((tx) => {
+        const conn = tx.db;
+        ensureDefaultFolderInTx(conn, userId);
+        const existing = conn
+          .prepare('SELECT 1 AS x FROM favorite_folders WHERE user_id = ? AND name = ?')
+          .get(userId, trimmed);
+        if (existing) throw err.input('同名收藏夹已存在。', [{ path: 'name', message: '重名' }]);
+        const id = newId();
+        const now = nowMs();
+        conn
+          .prepare(
+            `INSERT INTO favorite_folders (id, user_id, name, is_default, created_at, updated_at)
+             VALUES (?, ?, ?, 0, ?, ?)`,
+          )
+          .run(id, userId, trimmed, now, now);
+        return { folderId: id, name: trimmed, isDefault: false, count: 0, createdAt: now };
+      }, injectedDb ?? db);
+    },
+
+    /** 某个收藏夹的内容（校验归属）。 */
+    async getFavoriteFolder(
+      ctx: CallerContext,
+      folderId: string,
+      injectedDb?: SqliteDatabase,
+    ): Promise<{ folder: FavoriteFolderView; plugins: FavoritePluginView[] }> {
+      if (ctx.userId === null) throw err.unauthenticated();
+      const userId = ctx.userId;
+      return withRead((conn) => {
+        const folder = conn
+          .prepare(
+            'SELECT id, name, is_default, created_at FROM favorite_folders WHERE id = ? AND user_id = ?',
+          )
+          .get(folderId, userId) as
+          | { id: string; name: string; is_default: number; created_at: number }
+          | undefined;
+        if (!folder) throw err.unavailable('收藏夹不存在或不可访问。');
+
+        const rows = conn
+          .prepare(
+            `SELECT f.plugin_id, f.created_at, f.folder_id, p.display_name, p.plugin_path,
+                    r.full_name, r.is_archived
+               FROM plugin_favorites f
+               JOIN plugins p ON p.id = f.plugin_id
+               JOIN repositories r ON r.id = p.repository_id
+              WHERE f.user_id = ? AND f.folder_id = ?
+              ORDER BY f.created_at DESC, f.plugin_id ASC`,
+          )
+          .all(userId, folderId) as Array<{
+          plugin_id: string;
+          created_at: number;
+          folder_id: string;
+          display_name: string | null;
+          plugin_path: string;
+          full_name: string;
+          is_archived: number;
+        }>;
+
+        return {
+          folder: {
+            folderId: folder.id,
+            name: folder.name,
+            isDefault: folder.is_default === 1,
+            count: rows.length,
+            createdAt: folder.created_at,
+          },
+          plugins: rows.map((r) => ({
+            pluginId: r.plugin_id,
+            displayName: r.display_name,
+            repositoryFullName: r.full_name,
+            pluginPath: r.plugin_path,
+            isArchived: r.is_archived === 1,
+            createdAt: r.created_at,
+            folderId: folder.id,
+            folderName: folder.name,
+          })),
+        };
+      }, injectedDb ?? db);
+    },
+
+    /** 收藏页标题搜索：跨收藏夹匹配插件名/仓库名，结果带所在收藏夹。 */
+    async searchFavorites(
+      ctx: CallerContext,
+      q: string,
+      injectedDb?: SqliteDatabase,
+    ): Promise<FavoritePluginView[]> {
+      if (ctx.userId === null) throw err.unauthenticated();
+      const userId = ctx.userId;
+      const keyword = (q ?? '').trim();
+      if (!keyword) return [];
+      const like = `%${keyword.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+      return withRead((conn) => {
+        const rows = conn
+          .prepare(
+            `SELECT f.plugin_id, f.created_at, f.folder_id, ff.name AS folder_name,
+                    p.display_name, p.plugin_path, r.full_name, r.is_archived
+               FROM plugin_favorites f
+               JOIN plugins p ON p.id = f.plugin_id
+               JOIN repositories r ON r.id = p.repository_id
+               LEFT JOIN favorite_folders ff ON ff.id = f.folder_id
+              WHERE f.user_id = ?
+                AND (IFNULL(p.display_name, '') LIKE ? ESCAPE '\\'
+                     OR r.full_name LIKE ? ESCAPE '\\')
+              ORDER BY f.created_at DESC, f.plugin_id ASC`,
+          )
+          .all(userId, like, like) as Array<{
+          plugin_id: string;
+          created_at: number;
+          folder_id: string | null;
+          folder_name: string | null;
+          display_name: string | null;
+          plugin_path: string;
+          full_name: string;
+          is_archived: number;
+        }>;
+        return rows.map((r) => ({
+          pluginId: r.plugin_id,
+          displayName: r.display_name,
+          repositoryFullName: r.full_name,
+          pluginPath: r.plugin_path,
+          isArchived: r.is_archived === 1,
+          createdAt: r.created_at,
+          folderId: r.folder_id ?? '',
+          folderName: r.folder_name ?? DEFAULT_FAVORITE_FOLDER_NAME,
+        }));
       }, injectedDb ?? db);
     },
 
@@ -260,16 +523,20 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
       return withRead((conn) => {
         const rows = conn
           .prepare(
-            `SELECT f.plugin_id, f.created_at, p.display_name, p.plugin_path, r.full_name, r.is_archived
+            `SELECT f.plugin_id, f.created_at, f.folder_id, ff.name AS folder_name,
+                    p.display_name, p.plugin_path, r.full_name, r.is_archived
                FROM plugin_favorites f
                JOIN plugins p ON p.id = f.plugin_id
                JOIN repositories r ON r.id = p.repository_id
+               LEFT JOIN favorite_folders ff ON ff.id = f.folder_id
               WHERE f.user_id = ?
               ORDER BY f.created_at DESC, f.plugin_id ASC`,
           )
           .all(userId) as Array<{
           plugin_id: string;
           created_at: number;
+          folder_id: string | null;
+          folder_name: string | null;
           display_name: string | null;
           plugin_path: string;
           full_name: string;
@@ -282,6 +549,8 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
           pluginPath: r.plugin_path,
           isArchived: r.is_archived === 1,
           createdAt: r.created_at,
+          folderId: r.folder_id ?? '',
+          folderName: r.folder_name ?? DEFAULT_FAVORITE_FOLDER_NAME,
         }));
       }, injectedDb ?? db);
     },

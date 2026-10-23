@@ -363,28 +363,8 @@ function deleteDraftInTx(
   if (row.draft_type !== 'review') throw err.unavailable('草稿不存在或已不可访问。');
   if (row.owner_id !== userId) throw err.forbidden('只能删除自己的草稿。');
 
-  let withdrawn = false;
-  if (row.review_id) {
-    const review = conn
-      .prepare('SELECT published_revision_id FROM reviews WHERE id = ?')
-      .get(row.review_id) as { published_revision_id: string | null } | undefined;
-    if (review?.published_revision_id) {
-      const entity = conn
-        .prepare('SELECT withdrawn_at, hidden_at FROM content_entities WHERE id = ?')
-        .get(row.review_id) as { withdrawn_at: number | null; hidden_at: number | null } | undefined;
-      if (entity && entity.withdrawn_at === null && entity.hidden_at === null) {
-        const changed = conn
-          .prepare(
-            `UPDATE content_entities
-                SET withdrawn_at = ?, withdrawal_reason = ?,
-                    visibility_control_version = visibility_control_version + 1
-              WHERE id = ? AND withdrawn_at IS NULL AND hidden_at IS NULL`,
-          )
-          .run(nowMs(), '作者删除草稿时一并撤回。', row.review_id);
-        withdrawn = changed.changes > 0;
-      }
-    }
-  }
+  // 删除草稿只删草稿：**不撤回、不影响已提交/已发布评测**。
+  // 撤回是评测详情页的独立动作（作者操作），两者不再绑定。
 
   const submitted = conn
     .prepare('SELECT 1 AS x FROM content_submissions WHERE draft_id = ? LIMIT 1')
@@ -409,7 +389,7 @@ function deleteDraftInTx(
     }
   }
 
-  return { withdrawn };
+  return { withdrawn: false };
 }
 
 export const reviewsService = {
@@ -742,6 +722,103 @@ export const reviewsService = {
       return { deleted: true, withdrawn: result.withdrawn };
     }, db);
   },
+
+  /**
+   * 为已提交/已发布评测创建「修改草稿」。
+   *
+   * - 只有作者本人可以修改；
+   * - 已有未删除草稿 → 直接复用；
+   * - 否则把最近一次修订（优先公开修订）的内容复制成新草稿：
+   *   title / 正文分段 / 版本 / 判定 / 证据 / 档位。
+   *
+   * 修改稿提交后仍走原有 submitReview 流程（生成新修订，审核通过后替换公开修订）。
+   */
+  async createOrGetRevisionDraft(
+    ctx: CallerContext,
+    reviewId: string,
+    db?: SqliteDatabase,
+  ): Promise<{ draftId: string }> {
+    const userId = requireActiveUser(ctx);
+    if (typeof reviewId !== 'string' || !isUuidV7(reviewId)) {
+      throw err.input('评测标识格式不正确。', [{ path: 'review_id', message: '必须是规范 UUIDv7' }]);
+    }
+    return withTransaction((tx) => {
+      const conn = tx.db;
+      const review = conn
+        .prepare(
+          `SELECT r.id, r.plugin_id, r.published_revision_id, r.latest_submitted_revision_id,
+                  ce.author_id
+             FROM reviews r
+             JOIN content_entities ce ON ce.id = r.id
+            WHERE r.id = ?`,
+        )
+        .get(reviewId) as
+        | {
+            id: string;
+            plugin_id: string | null;
+            published_revision_id: string | null;
+            latest_submitted_revision_id: string | null;
+            author_id: string;
+          }
+        | undefined;
+      if (!review) throw err.unavailable('评测不存在或已不可访问。');
+      if (review.author_id !== userId) throw err.forbidden('只有作者本人可以修改这篇评测。');
+
+      const existing = conn
+        .prepare(
+          `SELECT id FROM content_drafts
+              WHERE review_id = ? AND owner_id = ? AND draft_type = 'review' AND deleted_at IS NULL
+              LIMIT 1`,
+        )
+        .get(reviewId, userId) as { id: string } | undefined;
+      if (existing) return { draftId: existing.id };
+
+      const revisionId = review.published_revision_id ?? review.latest_submitted_revision_id;
+      const rev = revisionId
+        ? (conn
+            .prepare(
+              `SELECT title, body_markdown, plugin_version, dsh_version, verdict, evidence_refs, assessment_level
+                 FROM review_revisions WHERE id = ?`,
+            )
+            .get(revisionId) as
+            | {
+                title: string;
+                body_markdown: string;
+                plugin_version: string;
+                dsh_version: string;
+                verdict: string | null;
+                evidence_refs: string | null;
+                assessment_level: string | null;
+              }
+            | undefined)
+        : undefined;
+      if (!rev) throw err.conflict('这篇评测还没有可修改的修订。');
+
+      const body = rev.body_markdown
+        .split(/\n{2,}/)
+        .map((text, index) => ({ key: `p${index}`, markdown: text }));
+      const payload: DraftPayload = {
+        title: rev.title,
+        pluginId: review.plugin_id,
+        pluginVersion: JSON.parse(rev.plugin_version) as VersionValue,
+        dshVersion: JSON.parse(rev.dsh_version) as VersionValue,
+        body,
+        verdict: (rev.verdict as VerdictKey | null) ?? null,
+        evidence: rev.evidence_refs ? (JSON.parse(rev.evidence_refs) as EvidenceRef[]) : [],
+        assessmentLevel: (rev.assessment_level as AssessmentLevel | null) ?? null,
+      };
+      const draftId = newId();
+      const now = nowMs();
+      conn
+        .prepare(
+          `INSERT INTO content_drafts
+             (id, owner_id, draft_type, review_id, payload, payload_schema_version, save_version, created_at, saved_at)
+           VALUES (?, ?, 'review', ?, ?, ?, 0, ?, ?)`,
+        )
+        .run(draftId, userId, reviewId, JSON.stringify(payload), DRAFT_PAYLOAD_SCHEMA_VERSION, now, now);
+      return { draftId };
+    }, db);
+  },
 };
 
 /** 分页读取某个作者的草稿列表（工作台用；不属于契约必需项，但保持只读语义）。 */
@@ -800,8 +877,11 @@ export interface DraftSummary {
 export async function listDraftSummaries(
   ctx: CallerContext,
   db?: SqliteDatabase,
+  q?: string,
 ): Promise<DraftSummary[]> {
   const userId = requireActiveUser(ctx);
+  const keyword = (q ?? '').trim();
+  const like = keyword ? `%${keyword.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : null;
   return withRead((conn) => {
     const rows = conn
       .prepare(
@@ -814,9 +894,10 @@ export async function listDraftSummaries(
            LEFT JOIN reviews r ON r.id = d.review_id
            LEFT JOIN content_entities ce ON ce.id = d.review_id
           WHERE d.owner_id = ? AND d.draft_type = 'review' AND d.deleted_at IS NULL
+            AND (? IS NULL OR IFNULL(json_extract(d.payload, '$.title'), '') LIKE ? ESCAPE '\\')
           ORDER BY d.saved_at DESC, d.id DESC`,
       )
-      .all(userId) as {
+      .all(userId, like, like) as {
       id: string;
       review_id: string | null;
       save_version: number;

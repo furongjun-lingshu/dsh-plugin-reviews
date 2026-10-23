@@ -10,8 +10,7 @@
  *     而不是撤回一份你没看过的新内容。
  *  3. 撤回不删除历史：公开修订指针保留，只是不再公开。这一点必须在界面上说清楚，
  *     否则作者会以为"撤回 = 销毁"，反而不敢用。
- *  3b. 撤回时可选「仅撤回」或「撤回并删除草稿」：后者会移除草稿区里的那份草稿，
- *     确认框必须写明草稿不可恢复；前者保留草稿供后续继续编辑。
+ *  3b. 撤回**只撤回评测**，不删除草稿；删除草稿是草稿区的独立动作，两者不再绑定。
  *  4. 成功后不立即刷新：刷新会让整页变成"作者已撤回"、把说明冲掉。给一个显式的刷新入口。
  */
 
@@ -34,11 +33,8 @@ export function WithdrawButton({
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  const submit = async (deleteDraft: boolean) => {
-    const message = deleteDraft
-      ? '撤回并删除草稿：评测将不再公开，草稿删除后不可恢复（历史修订仍保留）。继续？'
-      : '撤回这篇评测？撤回后读者将看不到它，草稿会保留在草稿区。继续？';
-    if (!window.confirm(message)) return;
+  const submit = async () => {
+    if (!window.confirm('撤回这篇评测？撤回后读者将看不到它。继续？')) return;
 
     setBusy(true);
     setError(null);
@@ -46,7 +42,7 @@ export function WithdrawButton({
     setPendingKey(requestKey);
 
     try {
-      await apiFetch<{ withdrawnAt: number; draftDeleted: boolean }>(
+      await apiFetch<{ withdrawnAt: number }>(
         `/api/reviews/${encodeURIComponent(reviewId)}/withdraw`,
         {
           method: 'POST',
@@ -54,17 +50,12 @@ export function WithdrawButton({
             expectedControlVersion,
             requestKey,
             reason: reason.trim() === '' ? null : reason.trim(),
-            deleteDraft,
           },
         },
       );
       setPendingKey(null);
       setOpen(false);
-      setDone(
-        deleteDraft
-          ? '已撤回并删除草稿。评测不再对读者公开；历史修订仍然保留（不会被删除）。'
-          : '已撤回。这篇评测不再对读者公开，历史修订仍然保留；草稿还在草稿区。',
-      );
+      setDone('已撤回。这篇评测不再对读者公开，历史修订仍然保留（不会被删除）。');
     } catch (e) {
       setError(e as ApiError);
     } finally {
@@ -118,25 +109,17 @@ export function WithdrawButton({
       />
       <p className="muted" style={{ fontSize: 12, margin: '6px 0' }}>
         撤回后读者看不到这篇评测（显示「作者已撤回」）。<strong>历史修订不会被删除</strong>；
-        想重新公开，需要修改后重新提交审核。草稿可以选择保留（方便继续改）或一并删除。
+        想重新公开，需要修改后重新提交审核。
       </p>
       {error ? <ErrorNotice error={error} onDismiss={() => setError(null)} /> : null}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button
           type="button"
-          onClick={() => void submit(false)}
+          onClick={() => void submit()}
           disabled={busy}
           className="button primary"
         >
-          {busy ? '撤回中…' : '仅撤回（保留草稿）'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void submit(true)}
-          disabled={busy}
-          className="button"
-        >
-          {busy ? '处理中…' : '撤回并删除草稿'}
+          {busy ? '撤回中…' : '确认撤回'}
         </button>
         <button
           type="button"

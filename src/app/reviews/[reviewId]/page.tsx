@@ -17,6 +17,7 @@ import { CommentSection } from '@/components/comment-section';
 import { RevisionHistory } from '@/components/revision-history';
 import { ArticleHero } from '@/components/article-hero';
 import { WithdrawButton } from '@/components/withdraw-button';
+import { EditReviewButton } from '@/components/edit-review-button';
 import { AdminHideForm } from '@/components/admin-hide-form';
 import { BackLink } from '@/components/back-link';
 import { HelpfulButton } from '@/components/helpful-button';
@@ -268,6 +269,9 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
         {ctx.userId !== null && ctx.userId === row.author_id ? (
           <div className="panel" style={{ marginTop: 12 }}>
             <h2 style={{ marginBottom: 8 }}>作者操作</h2>
+            <div style={{ marginBottom: 10 }}>
+              <EditReviewButton reviewId={row.review_id} />
+            </div>
             <WithdrawButton reviewId={row.review_id} expectedControlVersion={vis.controlVersion} />
           </div>
         ) : null}

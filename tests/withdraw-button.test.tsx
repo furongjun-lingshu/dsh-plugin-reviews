@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * 撤回按钮：仅撤回 / 撤回并删除草稿。
+ * 撤回按钮：只撤回评测，不删除草稿。
  *
- * 鉴别方式：把 submit 的 deleteDraft 参数写死为 false → 第二条用例红。
+ * 鉴别方式：把 deleteDraft 字段重新加回请求体 → 第二条断言红。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,11 +28,7 @@ function stubFetch(): Call[] {
         body: typeof init?.body === 'string' ? init.body : null,
       });
       return {
-        json: async () => ({
-          ok: true,
-          data: { withdrawnAt: 1, draftDeleted: true },
-          request_id: 'r',
-        }),
+        json: async () => ({ ok: true, data: { withdrawnAt: 1 }, request_id: 'r' }),
       };
     }),
   );
@@ -49,28 +45,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('撤回按钮 · 仅撤回 / 撤回并删除草稿', () => {
-  it('仅撤回：请求体 deleteDraft=false，提示草稿保留', async () => {
+describe('撤回按钮 · 仅撤回评测', () => {
+  it('确认撤回：请求体只有撤回字段，没有 deleteDraft；提示历史保留', async () => {
     const calls = stubFetch();
     render(<WithdrawButton reviewId="review-1" expectedControlVersion={1} />);
 
     fireEvent.click(screen.getByRole('button', { name: '撤回这篇评测' }));
-    fireEvent.click(screen.getByRole('button', { name: '仅撤回（保留草稿）' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认撤回' }));
 
-    await waitFor(() => expect(screen.getByText(/草稿还在草稿区/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/已撤回/)).toBeTruthy());
+    expect(calls).toHaveLength(1);
     const body = JSON.parse(calls[0].body ?? '{}') as { deleteDraft?: boolean };
-    expect(body.deleteDraft).toBe(false);
+    expect(body.deleteDraft).toBeUndefined();
+    expect(screen.getByText(/历史修订仍然保留/)).toBeTruthy();
   });
 
-  it('撤回并删除草稿：请求体 deleteDraft=true，提示草稿已删除', async () => {
+  it('取消确认：不发请求', () => {
+    (window.confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
     const calls = stubFetch();
     render(<WithdrawButton reviewId="review-1" expectedControlVersion={1} />);
 
     fireEvent.click(screen.getByRole('button', { name: '撤回这篇评测' }));
-    fireEvent.click(screen.getByRole('button', { name: '撤回并删除草稿' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认撤回' }));
 
-    await waitFor(() => expect(screen.getByText(/已撤回并删除草稿/)).toBeTruthy());
-    const body = JSON.parse(calls[0].body ?? '{}') as { deleteDraft?: boolean };
-    expect(body.deleteDraft).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });

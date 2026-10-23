@@ -15,6 +15,7 @@ import { getDb } from '@/server/platform/db';
 import { createSearchService, type SearchSource, type ReviewSearchRow } from '@/server/modules/search';
 import { createCatalogService, UNCATEGORIZED_CATEGORY } from '@/server/modules/catalog';
 import { PageJump } from '@/components/page-jump';
+import { isPageOutOfRange } from '@/packages/common/pagination';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { formatDateTimeOr } from '@/packages/common/time';
 
@@ -115,6 +116,7 @@ export default async function ReviewsPage({
   const page = result.page;
   const totalPages = result.total_pages;
   const items = result.items;
+  const outOfRange = isPageOutOfRange(page, totalPages);
   const hasFilters = conditions.q !== '' || conditions.cat !== '' || conditions.source !== 'all';
 
   // 两种空状态分开：真的没有公开评测 vs 有评测但筛选/搜索没命中
@@ -213,6 +215,17 @@ export default async function ReviewsPage({
               {conditions.q ? `（搜索：${conditions.q}）` : ''}
               {totalPages > 1 ? ` · 第 ${page} / ${totalPages} 页` : ''}
             </p>
+
+            {outOfRange ? (
+              <div className="panel" style={{ marginTop: 12 }}>
+                <p className="empty" style={{ marginBottom: 0 }}>
+                  您输入的页面不存在（共 {totalPages} 页）。
+                </p>
+                <p style={{ margin: '8px 0 0' }}>
+                  <Link href={listHref(conditions, { page: 1 })}>回到第 1 页</Link>
+                </p>
+              </div>
+            ) : null}
 
             {emptyKind === 'all-empty' ? (
               <p className="empty" style={{ marginBottom: 0 }}>

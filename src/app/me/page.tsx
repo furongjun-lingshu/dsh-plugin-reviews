@@ -1,24 +1,11 @@
 /**
- * 我的（个人中心最小版）：本人草稿与提交状态。
+ * 我的：评测（草稿 / 提交记录 / 已发布 三个子页）。
  *
- * 布局（页面布局.md §10）：**桌面左侧栏目导航 + 右侧内容**；手机由断点自动落成单列。
- * 页面标题 `h1` 放在分栏**之外**（整页居中偏左的页标题），因此左侧栏与右侧正文的第一行
- * （那句"写评测要从插件详情页进入…"）自然平齐，而不是与页标题等高。
+ * 三块用 `?tab=drafts|submissions|published` 切换，共用一条标题搜索 `?q=`。
+ * 草稿只放「还没提交的」；提交后草稿从草稿区移除，修改已提交评测走
+ * 「打开评测 → 修改测评」重新生成修改草稿。
  *
- * 内容区顶部是一条**真实计数**的统计条（草稿 / 提交记录 / 已发布），数字都来自下面的查询，
- * 不做估算——空的时候就是 0，一眼能看出"这个号还没开始写"。
- *
- * 本页只做"我的评测草稿 + 提交阶段"一块；收藏、整合包、事项属本切片范围外
- * （见 `docs/HANDOFF.md`：那些连表都没有）。
- *
- * 几处本轮补正（都是后端早已就绪、前端没接上的）：
- *  1. **栏目入口**：把已经存在的三块（评测 / 通知 / 个人设置）摆成左侧栏；
- *  2. **提交记录可跳转**：此前只列 id，看不出这是哪篇、能不能点。现在按
- *     `content_submissions.review_revision_id → review_revisions.review_id` 取到目标；
- *     **只在它确实有公开修订时才给链接**（否则 /reviews/{id} 只会 404）；
- *  3. **未登录文案纠错**：原文案写"本切片未接入真实 GitHub OAuth；开发环境可用
- *     `POST /api/session`"——两句话今天都不成立：真实 OAuth 已跑通，而登录 POST 已被移除
- *     （HANDOFF §8.1）。照它做会得到一个 405。现在改成指向顶部真实登录入口。
+ * 页面布局（页面布局.md §10）：桌面左侧栏目导航 + 右侧内容；手机由断点落成单列。
  */
 
 import Link from 'next/link';
@@ -33,14 +20,20 @@ import { formatDateTime } from '@/packages/common/time';
 
 export const dynamic = 'force-dynamic';
 
-interface DraftRow {
-  draft_id: string;
-  review_id: string | null;
-  save_version: number;
-  saved_at: number;
-  title: string;
-  published: boolean;
-  withdrawn: boolean;
+type Tab = 'drafts' | 'submissions' | 'published';
+
+const TAB_LABELS: Record<Tab, string> = {
+  drafts: '草稿',
+  submissions: '提交记录',
+  published: '已发布',
+};
+
+function readTab(raw: string | undefined): Tab {
+  return raw === 'submissions' || raw === 'published' ? raw : 'drafts';
+}
+
+function firstValue(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
 }
 
 interface SubRow {
@@ -49,15 +42,27 @@ interface SubRow {
   processing_state: SubmissionState;
   submitted_at: number;
   review_id: string | null;
-  /** 提交快照的标题（评论提交为 null）。 */
   title: string | null;
-  /** 目标评测是否已撤回（显示「已撤回」标签）。 */
   withdrawn_at: number | null;
-  /** 目标评测是否已有公开修订——决定给不给链接（没公开的话 /reviews/{id} 只会 404） */
   has_public_revision: number;
 }
 
-export default async function MePage() {
+interface PublishedRow {
+  review_id: string;
+  title: string;
+  updated_at: number | null;
+}
+
+export default async function MePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const tab = readTab(firstValue(sp.tab));
+  const q = (firstValue(sp.q) ?? '').trim().slice(0, 100);
+  const like = q ? `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : null;
+
   const ctx = await currentContext();
 
   if (ctx.userId === null) {
@@ -77,33 +82,83 @@ export default async function MePage() {
   }
 
   const db = getDb();
-  // 标题取草稿当前载荷（不是首次提交的修订标题）；服务层已按 owner 过滤。
-  const draftSummaries = await listDraftSummaries(ctx);
-  const drafts: DraftRow[] = draftSummaries.map((d) => ({
-    draft_id: d.draftId,
-    review_id: d.reviewId,
-    save_version: d.saveVersion,
-    saved_at: d.savedAt,
-    title: d.title,
-    published: d.published,
-    withdrawn: d.withdrawn,
-  }));
 
-  const subs = db
-    .prepare(
-      `SELECT s.id AS submission_id, s.submission_type, s.processing_state, s.submitted_at,
-              rev.review_id, rev.title AS title, ce.withdrawn_at,
-              CASE WHEN r.published_revision_id IS NULL THEN 0 ELSE 1 END AS has_public_revision
-         FROM content_submissions s
-         LEFT JOIN review_revisions rev ON rev.id = s.review_revision_id
-         LEFT JOIN reviews r ON r.id = rev.review_id
-         LEFT JOIN content_entities ce ON ce.id = rev.review_id
-        WHERE s.submitted_by = ?
-        ORDER BY s.submitted_at DESC, s.id DESC`,
-    )
-    .all(ctx.userId) as SubRow[];
+  // 统计条始终显示全量（不受搜索影响）
+  const draftCount = (
+    db
+      .prepare(
+        `SELECT count(*) AS c FROM content_drafts
+          WHERE owner_id = ? AND draft_type = 'review' AND deleted_at IS NULL`,
+      )
+      .get(ctx.userId) as { c: number }
+  ).c;
+  const subCount = (
+    db.prepare('SELECT count(*) AS c FROM content_submissions WHERE submitted_by = ?').get(ctx.userId) as {
+      c: number;
+    }
+  ).c;
+  const publishedCount = (
+    db
+      .prepare(
+        `SELECT count(*) AS c
+           FROM reviews r
+           JOIN content_entities ce ON ce.id = r.id
+          WHERE ce.author_id = ?
+            AND r.published_revision_id IS NOT NULL
+            AND ce.withdrawn_at IS NULL
+            AND ce.hidden_at IS NULL`,
+      )
+      .get(ctx.userId) as { c: number }
+  ).c;
 
-  const publishedCount = subs.filter((s) => s.processing_state === 'published').length;
+  const draftSummaries = tab === 'drafts' ? await listDraftSummaries(ctx, db, q) : [];
+  const subs =
+    tab === 'submissions'
+      ? (db
+          .prepare(
+            `SELECT s.id AS submission_id, s.submission_type, s.processing_state, s.submitted_at,
+                    rev.review_id, rev.title AS title, ce.withdrawn_at,
+                    CASE WHEN r.published_revision_id IS NULL THEN 0 ELSE 1 END AS has_public_revision
+               FROM content_submissions s
+               LEFT JOIN review_revisions rev ON rev.id = s.review_revision_id
+               LEFT JOIN reviews r ON r.id = rev.review_id
+               LEFT JOIN content_entities ce ON ce.id = rev.review_id
+              WHERE s.submitted_by = ?
+                AND (? IS NULL OR IFNULL(rev.title, '') LIKE ? ESCAPE '\\')
+              ORDER BY s.submitted_at DESC, s.id DESC`,
+          )
+          .all(ctx.userId, like, like) as SubRow[])
+      : [];
+  const published =
+    tab === 'published'
+      ? (db
+          .prepare(
+            `SELECT r.id AS review_id, rev.title, ce.public_updated_at AS updated_at
+               FROM reviews r
+               JOIN content_entities ce ON ce.id = r.id
+               JOIN review_revisions rev ON rev.id = r.published_revision_id
+              WHERE ce.author_id = ?
+                AND r.published_revision_id IS NOT NULL
+                AND ce.withdrawn_at IS NULL
+                AND ce.hidden_at IS NULL
+                AND (? IS NULL OR rev.title LIKE ? ESCAPE '\\')
+              ORDER BY ce.public_updated_at DESC, r.id DESC`,
+          )
+          .all(ctx.userId, like, like) as PublishedRow[])
+      : [];
+
+  const tabHref = (next: Tab): string => {
+    const params = new URLSearchParams();
+    params.set('tab', next);
+    if (q) params.set('q', q);
+    return `/me?${params.toString()}`;
+  };
+
+  const emptyText: Record<Tab, string> = {
+    drafts: '暂无草稿。写评测请到插件目录选一个插件，从它的详情页开始。',
+    submissions: '暂无提交记录。',
+    published: '暂无已发布评测。',
+  };
 
   return (
     <div>
@@ -115,11 +170,11 @@ export default async function MePage() {
         <div>
           <div className="stat-row">
             <div className="stat">
-              <div className="stat-value">{drafts.length}</div>
+              <div className="stat-value">{draftCount}</div>
               <div className="stat-label">草稿</div>
             </div>
             <div className="stat">
-              <div className="stat-value">{subs.length}</div>
+              <div className="stat-value">{subCount}</div>
               <div className="stat-label">提交记录</div>
             </div>
             <div className="stat">
@@ -128,78 +183,133 @@ export default async function MePage() {
             </div>
           </div>
 
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+            {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
+              <Link
+                key={t}
+                href={tabHref(t)}
+                className={tab === t ? 'button primary' : 'button'}
+                aria-current={tab === t ? 'page' : undefined}
+              >
+                {TAB_LABELS[t]}
+              </Link>
+            ))}
+          </div>
+
+          <form action="/me" method="get" className="search" style={{ marginBottom: 12 }}>
+            <input type="hidden" name="tab" value={tab} />
+            <input
+              type="search"
+              name="q"
+              defaultValue={q}
+              placeholder="按标题关键词搜索"
+              aria-label="按标题关键词搜索"
+              maxLength={100}
+            />
+            <button type="submit" className="search-go">
+              搜索
+            </button>
+          </form>
+
           <section className="panel">
             <div className="section-head">
-              <h2>草稿（{drafts.length}）</h2>
+              <h2>
+                {TAB_LABELS[tab]}
+                {q ? `（搜索：${q}）` : ''}
+              </h2>
             </div>
-            {drafts.length === 0 ? (
-              <p className="empty" style={{ marginBottom: 0 }}>
-                暂无草稿。写评测请到 <Link href="/plugins">插件目录</Link> 选一个插件，从它的详情页开始。
-              </p>
-            ) : (
-              <DraftList
-                drafts={drafts.map((d) => ({
-                  draftId: d.draft_id,
-                  title: d.title,
-                  saveVersion: d.save_version,
-                  savedAt: d.saved_at,
-                  published: d.published,
-                  withdrawn: d.withdrawn,
-                }))}
-              />
-            )}
-          </section>
 
-          <section className="panel" style={{ marginTop: 20 }}>
-            <div className="section-head">
-              <h2>提交记录（{subs.length}）</h2>
-            </div>
-            {subs.length === 0 ? (
-              <p className="empty" style={{ marginBottom: 0 }}>
-                暂无提交。
-              </p>
-            ) : (
-              <ul className="item-list">
-                {subs.map((s) => {
-                  const kind = s.submission_type === 'comment_revision' ? '评论' : '评测';
-                  const linkable = s.review_id !== null && s.has_public_revision === 1;
-                  return (
-                    <li key={s.submission_id} className="item">
+            {tab === 'drafts' ? (
+              draftSummaries.length === 0 ? (
+                <p className="empty" style={{ marginBottom: 0 }}>
+                  {emptyText.drafts}
+                </p>
+              ) : (
+                <DraftList
+                  drafts={draftSummaries.map((d) => ({
+                    draftId: d.draftId,
+                    title: d.title,
+                    saveVersion: d.saveVersion,
+                    savedAt: d.savedAt,
+                    published: d.published,
+                    withdrawn: d.withdrawn,
+                  }))}
+                />
+              )
+            ) : null}
+
+            {tab === 'submissions' ? (
+              subs.length === 0 ? (
+                <p className="empty" style={{ marginBottom: 0 }}>
+                  {emptyText.submissions}
+                </p>
+              ) : (
+                <ul className="item-list">
+                  {subs.map((s) => {
+                    const kind = s.submission_type === 'comment_revision' ? '评论' : '评测';
+                    const linkable = s.review_id !== null && s.has_public_revision === 1;
+                    return (
+                      <li key={s.submission_id} className="item">
+                        <div className="item-body">
+                          <h3>
+                            {s.title && s.title.trim() !== '' ? (
+                              linkable ? (
+                                <Link href={`/reviews/${s.review_id}`}>{s.title}</Link>
+                              ) : (
+                                <span className="muted">{s.title}</span>
+                              )
+                            ) : linkable ? (
+                              <Link href={`/reviews/${s.review_id}`}>查看已发布内容</Link>
+                            ) : (
+                              <span className="muted">尚未公开发布</span>
+                            )}
+                          </h3>
+                          <div>
+                            <span className="tag" style={{ marginRight: 6 }}>
+                              {kind}
+                            </span>
+                            <span className="tag">{submissionStateLabels[s.processing_state]}</span>
+                            {s.withdrawn_at !== null ? (
+                              <span className="tag" style={{ marginLeft: 6 }}>
+                                已撤回
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="list-meta" style={{ marginTop: 6 }}>
+                            <span>{formatDateTime(s.submitted_at)}</span>
+                            <code>{s.submission_id}</code>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            ) : null}
+
+            {tab === 'published' ? (
+              published.length === 0 ? (
+                <p className="empty" style={{ marginBottom: 0 }}>
+                  {emptyText.published}
+                </p>
+              ) : (
+                <ul className="item-list">
+                  {published.map((p) => (
+                    <li key={p.review_id} className="item">
                       <div className="item-body">
                         <h3>
-                          {s.title && s.title.trim() !== '' ? (
-                            linkable ? (
-                              <Link href={`/reviews/${s.review_id}`}>{s.title}</Link>
-                            ) : (
-                              <span className="muted">{s.title}</span>
-                            )
-                          ) : linkable ? (
-                            <Link href={`/reviews/${s.review_id}`}>查看已发布内容</Link>
-                          ) : (
-                            <span className="muted">尚未公开发布</span>
-                          )}
+                          <Link href={`/reviews/${p.review_id}`}>{p.title}</Link>
                         </h3>
-                        <div>
-                          <span className="tag" style={{ marginRight: 6 }}>
-                            {kind}
-                          </span>
-                          <span className="tag">{submissionStateLabels[s.processing_state]}</span>
-                          {s.withdrawn_at !== null ? (
-                            <span className="tag" style={{ marginLeft: 6 }}>
-                              已撤回
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="list-meta" style={{ marginTop: 6 }}>
-                          <span>{formatDateTime(s.submitted_at)}</span>
-                          <code>{s.submission_id}</code>
+                        <div className="list-meta">
+                          <span>最近更新 {p.updated_at === null ? '未知' : formatDateTime(p.updated_at)}</span>
+                          <code>{p.review_id}</code>
                         </div>
                       </div>
                     </li>
-                  );
-                })}
-              </ul>
-            )}
+                  ))}
+                </ul>
+              )
+            ) : null}
           </section>
         </div>
       </div>

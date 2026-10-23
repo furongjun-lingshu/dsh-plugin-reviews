@@ -271,6 +271,10 @@ export async function submitReview(
       .prepare('UPDATE reviews SET latest_submitted_revision_id = ? WHERE id = ?')
       .run(revisionId, draft.review_id);
 
+    // 6) 提交后草稿从「草稿区」移除：软删除，保留提交与修订历史。
+    //    修改评测走「打开已提交测评 → 修改测评」，会重新生成/复用草稿。
+    tx.db.prepare('UPDATE content_drafts SET deleted_at = ? WHERE id = ?').run(now, draft.id);
+
     return { submissionId, revisionId, reviewId: draft.review_id };
   }, db);
 

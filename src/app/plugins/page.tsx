@@ -13,6 +13,7 @@ import { createCatalogService } from '@/server/modules/catalog';
 import { UNCATEGORIZED_CATEGORY } from '@/server/modules/catalog/service';
 import { formatDateTimeOr } from '@/packages/common/time';
 import { tierLabel, securityLabel } from '@/packages/common/assessment';
+import { isPageOutOfRange } from '@/packages/common/pagination';
 import type { PluginSummary } from '@/server/modules/catalog/types';
 import { PageJump } from '@/components/page-jump';
 
@@ -173,7 +174,7 @@ export default async function PluginsPage({
 
   // 越界页（把 page=99 手打进 URL）：单独给"超出范围 + 回第 1 页"，
   // 不要再报"筛选没匹配到"—— 那样会让用户以为筛选条件把条目滤光了。
-  const outOfRange = result.items.length === 0 && result.total > 0 && conditions.page > 1;
+  const outOfRange = isPageOutOfRange(conditions.page, result.total_pages);
 
   const emptyKind: 'none' | 'directory-empty' | 'filtered-empty' =
     result.items.length > 0 || outOfRange
@@ -319,10 +320,14 @@ export default async function PluginsPage({
           </div>
 
           {outOfRange ? (
-            <p className="notice warn" style={{ marginTop: 'var(--space-4)' }}>
-              第 {conditions.page} 页超出范围（共 {result.total_pages} 页）。
-              <Link href={listHref(conditions, { page: 1 })}>回到第 1 页</Link>。
-            </p>
+            <div className="panel" style={{ marginTop: 'var(--space-4)' }}>
+              <p className="empty" style={{ marginBottom: 0 }}>
+                您输入的页面不存在（共 {result.total_pages} 页）。
+              </p>
+              <p style={{ margin: '8px 0 0' }}>
+                <Link href={listHref(conditions, { page: 1 })}>回到第 1 页</Link>
+              </p>
+            </div>
           ) : null}
 
           {emptyKind === 'directory-empty' ? (
