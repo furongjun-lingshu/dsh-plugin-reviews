@@ -98,14 +98,14 @@ export function AdminCorrectionPanel() {
   };
 
   return (
-    <section style={{ marginTop: 32, borderTop: '1px solid #DBE1EA', paddingTop: 16 }}>
+    <section style={{ marginTop: 32, borderTop: '1px solid var(--md-sys-color-outline-variant)', paddingTop: 16 }}>
       <h2 style={{ fontSize: 18 }}>资料纠错</h2>
-      <p style={{ color: '#526174', fontSize: 14 }}>
+      <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>
         用户反馈的插件资料错误。采纳后修正值优先于同步值；「恢复同步资料」只是删掉覆盖值（同步值一直原样保存着）。
       </p>
 
       {error ? <ErrorNotice error={error} onDismiss={() => setError(null)} /> : null}
-      {notice ? <p style={{ color: '#1E5B32', fontSize: 14 }}>{notice}</p> : null}
+      {notice ? <p style={{ color: 'var(--success-ink)', fontSize: 14 }}>{notice}</p> : null}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         {STATES.map((s) => (
@@ -117,9 +117,9 @@ export function AdminCorrectionPanel() {
               void load(s.value);
             }}
             style={{
-              background: state === s.value ? '#4e7a4e' : '#FFFFFF',
-              color: state === s.value ? '#FFFFFF' : '#526174',
-              border: '1px solid #DBE1EA',
+              background: state === s.value ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-surface-container-lowest)',
+              color: state === s.value ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface-variant)',
+              border: '1px solid var(--md-sys-color-outline-variant)',
               borderRadius: 999,
               padding: '3px 12px',
               cursor: 'pointer',
@@ -132,19 +132,19 @@ export function AdminCorrectionPanel() {
       </div>
 
       {rows === null ? (
-        <p style={{ color: '#526174' }}>正在读取纠错…</p>
+        <p style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>正在读取纠错…</p>
       ) : rows.length === 0 ? (
-        <p style={{ color: '#526174', fontSize: 14 }}>没有{STATES.find((s) => s.value === state)?.label}的纠错。</p>
+        <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>没有{STATES.find((s) => s.value === state)?.label}的纠错。</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {rows.map((r) => (
             <li
               key={r.correctionId}
-              style={{ border: '1px solid #DBE1EA', borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 14 }}
+              style={{ border: '1px solid var(--md-sys-color-outline-variant)', borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 14 }}
             >
               <div>
                 <strong>{r.pluginLabel}</strong>
-                <span style={{ color: '#526174' }}>
+                <span style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>
                   {' · '}
                   {r.submittedByNickname} 提交于 {formatDateTime(r.createdAt)}
                   {r.state !== 'open' ? ` · 状态 ${r.state}` : ''}
@@ -154,14 +154,14 @@ export function AdminCorrectionPanel() {
                 {Object.entries(r.proposed).map(([field, value]) => (
                   <div key={field} style={{ marginBottom: 4 }}>
                     <span className="tag">{FIELD_LABELS[field] ?? field}</span>{' '}
-                    <span style={{ color: '#1E293B' }}>{value}</span>
+                    <span style={{ color: 'var(--ink)' }}>{value}</span>
                   </div>
                 ))}
               </div>
-              <div style={{ color: '#526174' }}>说明：{r.description}</div>
+              <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>说明：{r.description}</div>
               {r.referenceUrl ? (
                 <div style={{ marginTop: 4 }}>
-                  <a href={r.referenceUrl} target="_blank" rel="noreferrer" style={{ color: '#2456B8', fontSize: 13 }}>
+                  <a href={r.referenceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 13 }}>
                     参考链接
                   </a>
                 </div>
@@ -188,7 +188,7 @@ export function AdminCorrectionPanel() {
                     type="button"
                     disabled={busy === r.correctionId}
                     onClick={() => void handle(r.correctionId, 'reject')}
-                    style={{ ...buttonStyle, background: '#526174' }}
+                    style={{ ...buttonStyle, background: 'var(--md-sys-color-on-surface-variant)' }}
                   >
                     驳回
                   </button>
@@ -201,7 +201,7 @@ export function AdminCorrectionPanel() {
                       type="button"
                       disabled={busy === `${r.pluginId}:${field}`}
                       onClick={() => void revert(r.pluginId, field)}
-                      style={{ ...buttonStyle, background: '#8A6D1C' }}
+                      style={{ ...buttonStyle, background: 'var(--warn-ink)' }}
                     >
                       恢复「{FIELD_LABELS[field] ?? field}」的同步资料
                     </button>

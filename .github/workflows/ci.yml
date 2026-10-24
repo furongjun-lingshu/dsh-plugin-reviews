@@ -1,0 +1,34 @@
+name: CI
+
+# 这个仓库的测试用真实临时库 + 真实迁移，跑一次 35 秒左右。
+# 没有 CI 的时候，629 条用例只靠"提交前记得跑"——任何人 clone 后跑出红，
+# 第一反应都会是"仓库坏了"。这里把它变成推上来就验。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 只用 npm：仓库里是 package-lock.json，dev.cmd 与 Dockerfile 也都用 npm。
+      # 混用 pnpm 会生成第二套锁文件，装出可能不同的依赖树。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 测试（真实临时库 + 真实迁移）
+        run: npm test
+
+      - name: 用词检查
+        run: node scripts/check-wording.mjs docs/用词规范.md

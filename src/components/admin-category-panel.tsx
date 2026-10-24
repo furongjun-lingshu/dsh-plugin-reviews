@@ -134,25 +134,25 @@ export function AdminCategoryPanel() {
   };
 
   return (
-    <section style={{ marginTop: 32, borderTop: '1px solid #DBE1EA', paddingTop: 16 }}>
+    <section style={{ marginTop: 32, borderTop: '1px solid var(--md-sys-color-outline-variant)', paddingTop: 16 }}>
       <h2 style={{ fontSize: 18 }}>分类管理</h2>
-      <p style={{ color: '#526174', fontSize: 14 }}>
+      <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>
         目录上的「用途分类」由这张表决定：一个分类认领若干 GitHub topics，命中即归入该分类。
         计数口径是<strong>不同仓库数</strong>（一个仓库拆成 11 个插件不会把分类放大 11 倍）。
         没有命中任何分类的插件显示为「未分类」。
       </p>
 
       {error ? <ErrorNotice error={error} onDismiss={() => setError(null)} /> : null}
-      {notice ? <p style={{ color: '#1E5B32', fontSize: 14 }}>{notice}</p> : null}
+      {notice ? <p style={{ color: 'var(--success-ink)', fontSize: 14 }}>{notice}</p> : null}
 
       {data === null ? (
-        <p style={{ color: '#526174' }}>正在读取分类…</p>
+        <p style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>正在读取分类…</p>
       ) : (
         <>
           <h3 style={{ fontSize: 16, marginTop: 16 }}>已有分类（{data.categories.length}）</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: '#526174' }}>
+              <tr style={{ textAlign: 'left', color: 'var(--md-sys-color-on-surface-variant)' }}>
                 <th style={{ padding: '6px 4px' }}>分类</th>
                 <th style={{ padding: '6px 4px' }}>认领的 topics</th>
                 <th style={{ padding: '6px 4px' }}>仓库 / 插件</th>
@@ -162,15 +162,15 @@ export function AdminCategoryPanel() {
             </thead>
             <tbody>
               {data.categories.map((c) => (
-                <tr key={c.slug} style={{ borderTop: '1px solid #DBE1EA', verticalAlign: 'top' }}>
+                <tr key={c.slug} style={{ borderTop: '1px solid var(--md-sys-color-outline-variant)', verticalAlign: 'top' }}>
                   <td style={{ padding: '8px 4px' }}>
                     <div style={{ fontWeight: 600 }}>
                       {c.label}
                       {c.isVisible ? '' : '（隐藏）'}
                     </div>
-                    <div style={{ color: '#8A6D1C', fontSize: 12 }}>{c.slug}</div>
+                    <div style={{ color: 'var(--warn-ink)', fontSize: 12 }}>{c.slug}</div>
                   </td>
-                  <td style={{ padding: '8px 4px', maxWidth: 420, color: '#526174' }}>
+                  <td style={{ padding: '8px 4px', maxWidth: 420, color: 'var(--md-sys-color-on-surface-variant)' }}>
                     {c.topics.join(' · ') || '（空）'}
                   </td>
                   <td style={{ padding: '8px 4px', whiteSpace: 'nowrap' }}>
@@ -181,7 +181,7 @@ export function AdminCategoryPanel() {
                     <button
                       type="button"
                       onClick={() => startEdit(c)}
-                      style={{ background: 'none', border: 'none', color: '#2456B8', cursor: 'pointer', padding: 0, fontSize: 13, marginRight: 10 }}
+                      style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 13, marginRight: 10 }}
                     >
                       编辑
                     </button>
@@ -189,7 +189,7 @@ export function AdminCategoryPanel() {
                       type="button"
                       disabled={busy}
                       onClick={() => void remove(c.slug)}
-                      style={{ background: 'none', border: 'none', color: '#B4232A', cursor: 'pointer', padding: 0, fontSize: 13 }}
+                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0, fontSize: 13 }}
                     >
                       删除
                     </button>
@@ -234,7 +234,7 @@ export function AdminCategoryPanel() {
                 onChange={(e) => setDraft({ ...draft, sortOrder: e.target.value })}
                 style={{ ...inputStyle, width: 180 }}
               />
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: '#526174', fontSize: 14 }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>
                 <input
                   type="checkbox"
                   checked={draft.isVisible}
@@ -251,7 +251,7 @@ export function AdminCategoryPanel() {
                 {busy ? '保存中…' : editing ? '保存修改' : '新增分类'}
               </button>
               {editing ? (
-                <button type="button" onClick={reset} style={{ ...buttonStyle, background: '#526174' }}>
+                <button type="button" onClick={reset} style={{ ...buttonStyle, background: 'var(--md-sys-color-on-surface-variant)' }}>
                   取消
                 </button>
               ) : null}
@@ -259,11 +259,11 @@ export function AdminCategoryPanel() {
           </div>
 
           <h3 style={{ fontSize: 16, marginTop: 24 }}>待归类 topics（按覆盖仓库数）</h3>
-          <p style={{ color: '#526174', fontSize: 13, marginTop: 0 }}>
+          <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 13, marginTop: 0 }}>
             这些 topics 还没被任何分类认领；点一下就加进上面的草稿。
           </p>
           {unmapped.length === 0 ? (
-            <p style={{ color: '#526174', fontSize: 14 }}>没有未归类的 topics（或全部已归类）。</p>
+            <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>没有未归类的 topics（或全部已归类）。</p>
           ) : (
             <ul style={{ listStyle: 'none', padding: 0, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {unmapped.map((t) => (
@@ -273,12 +273,12 @@ export function AdminCategoryPanel() {
                     onClick={() => claimTopic(t.topic)}
                     title={`覆盖 ${t.repositoryCount} 个仓库 · 点击加入草稿`}
                     style={{
-                      background: '#FFFFFF',
-                      border: '1px solid #DBE1EA',
+                      background: 'var(--md-sys-color-surface-container-lowest)',
+                      border: '1px solid var(--md-sys-color-outline-variant)',
                       borderRadius: 6,
                       padding: '4px 10px',
                       cursor: 'pointer',
-                      color: '#526174',
+                      color: 'var(--md-sys-color-on-surface-variant)',
                       fontSize: 13,
                     }}
                   >

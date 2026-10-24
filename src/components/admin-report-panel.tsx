@@ -94,15 +94,15 @@ export function AdminReportPanel() {
   };
 
   return (
-    <section style={{ marginTop: 32, borderTop: '1px solid #DBE1EA', paddingTop: 16 }}>
+    <section style={{ marginTop: 32, borderTop: '1px solid var(--md-sys-color-outline-variant)', paddingTop: 16 }}>
       <h2 style={{ fontSize: 18 }}>举报处理</h2>
-      <p style={{ color: '#526174', fontSize: 14 }}>
+      <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>
         登录用户对评测 / 评论 / 整合包版本的举报都进这里。处理必填原因：会写进处理记录，并以站内通知
         发给举报人（隐藏时也给内容作者发一条）。
       </p>
 
       {error ? <ErrorNotice error={error} onDismiss={() => setError(null)} /> : null}
-      {notice ? <p style={{ color: '#1E5B32', fontSize: 14 }}>{notice}</p> : null}
+      {notice ? <p style={{ color: 'var(--success-ink)', fontSize: 14 }}>{notice}</p> : null}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         {STATES.map((s) => (
@@ -114,9 +114,9 @@ export function AdminReportPanel() {
               void load(s.value);
             }}
             style={{
-              background: state === s.value ? '#4e7a4e' : '#FFFFFF',
-              color: state === s.value ? '#FFFFFF' : '#526174',
-              border: '1px solid #DBE1EA',
+              background: state === s.value ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-surface-container-lowest)',
+              color: state === s.value ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface-variant)',
+              border: '1px solid var(--md-sys-color-outline-variant)',
               borderRadius: 999,
               padding: '3px 12px',
               cursor: 'pointer',
@@ -129,31 +129,31 @@ export function AdminReportPanel() {
       </div>
 
       {reports === null ? (
-        <p style={{ color: '#526174' }}>正在读取举报…</p>
+        <p style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>正在读取举报…</p>
       ) : reports.length === 0 ? (
-        <p style={{ color: '#526174', fontSize: 14 }}>没有{STATES.find((s) => s.value === state)?.label}的举报。</p>
+        <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>没有{STATES.find((s) => s.value === state)?.label}的举报。</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {reports.map((r) => (
             <li
               key={r.reportId}
-              style={{ border: '1px solid #DBE1EA', borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 14 }}
+              style={{ border: '1px solid var(--md-sys-color-outline-variant)', borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 14 }}
             >
               <div>
                 <span className="tag warn">{TARGET_LABELS[r.targetKind] ?? r.targetKind}</span>
                 <strong style={{ marginLeft: 8 }}>{REASON_LABELS[r.reason] ?? r.reason}</strong>
-                <span style={{ color: '#526174' }}>
+                <span style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>
                   {' · '}
                   {r.reporterNickname} 举报于 {formatDateTime(r.createdAt)}
                   {r.state !== 'open' ? ` · 状态 ${r.state}` : ''}
                 </span>
               </div>
-              <div style={{ marginTop: 6, color: '#1E293B' }}>{r.targetExcerpt}</div>
+              <div style={{ marginTop: 6, color: 'var(--ink)' }}>{r.targetExcerpt}</div>
               {r.detail ? (
-                <div style={{ marginTop: 4, color: '#526174' }}>补充说明：{r.detail}</div>
+                <div style={{ marginTop: 4, color: 'var(--md-sys-color-on-surface-variant)' }}>补充说明：{r.detail}</div>
               ) : null}
               <div style={{ marginTop: 4 }}>
-                <a href={r.targetHref} style={{ color: '#2456B8', fontSize: 13 }}>
+                <a href={r.targetHref} style={{ color: 'var(--accent)', fontSize: 13 }}>
                   查看被举报内容
                 </a>
               </div>
@@ -167,13 +167,13 @@ export function AdminReportPanel() {
                     onChange={(e) => setReasons({ ...reasons, [r.reportId]: e.target.value })}
                     style={{ ...inputStyle, flex: '1 1 260px' }}
                   />
-                  <button type="button" disabled={busy === r.reportId} onClick={() => void handle(r.reportId, 'hide')} style={{ ...buttonStyle, background: '#B4232A' }}>
+                  <button type="button" disabled={busy === r.reportId} onClick={() => void handle(r.reportId, 'hide')} style={{ ...buttonStyle, background: 'var(--danger)' }}>
                     隐藏内容
                   </button>
-                  <button type="button" disabled={busy === r.reportId} onClick={() => void handle(r.reportId, 'dismiss')} style={{ ...buttonStyle, background: '#526174' }}>
+                  <button type="button" disabled={busy === r.reportId} onClick={() => void handle(r.reportId, 'dismiss')} style={{ ...buttonStyle, background: 'var(--md-sys-color-on-surface-variant)' }}>
                     驳回
                   </button>
-                  <button type="button" disabled={busy === r.reportId} onClick={() => void handle(r.reportId, 'request_evidence')} style={{ ...buttonStyle, background: '#8A6D1C' }}>
+                  <button type="button" disabled={busy === r.reportId} onClick={() => void handle(r.reportId, 'request_evidence')} style={{ ...buttonStyle, background: 'var(--warn-ink)' }}>
                     要求补充证据
                   </button>
                 </div>

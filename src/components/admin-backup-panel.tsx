@@ -80,21 +80,21 @@ export function AdminBackupPanel() {
   };
 
   return (
-    <section style={{ marginTop: 32, borderTop: '1px solid #DBE1EA', paddingTop: 16 }}>
+    <section style={{ marginTop: 32, borderTop: '1px solid var(--md-sys-color-outline-variant)', paddingTop: 16 }}>
       <h2 style={{ fontSize: 18 }}>存储与备份</h2>
-      <p style={{ color: '#526174', fontSize: 14 }}>
+      <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>
         每日 03:00（Asia/Shanghai）自动生成一个完整恢复点（库 + 媒体 + 清单），保留最近若干份。
         恢复请在维护窗口执行 <code>node scripts/restore-backup.mjs --latest --force</code>（会先校验 sha256 与完整性，再覆盖）。
       </p>
 
       {error ? <ErrorNotice error={error} onDismiss={() => setError(null)} /> : null}
-      {notice ? <p style={{ color: '#1E5B32', fontSize: 14 }}>{notice}</p> : null}
+      {notice ? <p style={{ color: 'var(--success-ink)', fontSize: 14 }}>{notice}</p> : null}
 
       {data === null ? (
-        <p style={{ color: '#526174' }}>正在读取备份清单…</p>
+        <p style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>正在读取备份清单…</p>
       ) : (
         <>
-          <div style={{ fontSize: 14, color: '#526174' }}>
+          <div style={{ fontSize: 14, color: 'var(--md-sys-color-on-surface-variant)' }}>
             落点 <code>{data.backupRoot}</code> · 保留 {data.keep} 份 · 最近一次{' '}
             <strong>{data.lastBackupAt ? formatDateTime(Date.parse(data.lastBackupAt)) : '（还没有）'}</strong>
           </div>
@@ -103,24 +103,24 @@ export function AdminBackupPanel() {
             <button type="button" disabled={busy} onClick={() => void runBackup()} style={buttonStyle}>
               {busy ? '备份中…' : '立即备份'}
             </button>
-            <button type="button" onClick={() => void load()} style={{ ...buttonStyle, background: '#526174' }}>
+            <button type="button" onClick={() => void load()} style={{ ...buttonStyle, background: 'var(--md-sys-color-on-surface-variant)' }}>
               刷新
             </button>
           </div>
 
           <h3 style={{ fontSize: 16, marginTop: 20 }}>最近 {data.backups.length} 份</h3>
           {data.backups.length === 0 ? (
-            <p style={{ color: '#526174', fontSize: 14 }}>还没有任何备份。建议现在点一次「立即备份」。</p>
+            <p style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: 14 }}>还没有任何备份。建议现在点一次「立即备份」。</p>
           ) : (
             <ul style={{ listStyle: 'none', padding: 0 }}>
               {data.backups.map((b) => (
                 <li
                   key={b.dirName}
-                  style={{ border: '1px solid #DBE1EA', borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 14 }}
+                  style={{ border: '1px solid var(--md-sys-color-outline-variant)', borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 14 }}
                 >
                   <div>
                     <strong>{b.label ?? 'unknown'}</strong>
-                    <span style={{ color: '#526174' }}>
+                    <span style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>
                       {' · '}
                       {b.createdAt ? formatDateTime(Date.parse(b.createdAt)) : b.dirName}
                       {' · '}
@@ -131,19 +131,19 @@ export function AdminBackupPanel() {
                       style={{
                         marginLeft: 8,
                         fontSize: 12,
-                        color: b.integrityOk ? '#1E5B32' : '#B4232A',
+                        color: b.integrityOk ? 'var(--success-ink)' : 'var(--danger)',
                       }}
                     >
                       {b.integrityOk ? `完整性 ${b.integrity}` : `完整性异常：${b.integrity ?? '未知'}`}
                     </span>
                   </div>
-                  <div style={{ color: '#526174', marginTop: 4 }}>
+                  <div style={{ color: 'var(--md-sys-color-on-surface-variant)', marginTop: 4 }}>
                     schema {b.schemaVersion ?? '—'} ·{' '}
                     {Object.entries(b.counts)
                       .map(([k, v]) => `${k}=${v ?? '—'}`)
                       .join(' ')}
                   </div>
-                  <div style={{ color: '#8A6D1C', fontSize: 13, marginTop: 2 }}>
+                  <div style={{ color: 'var(--warn-ink)', fontSize: 13, marginTop: 2 }}>
                     <code>{b.dirName}</code>
                   </div>
                 </li>
