@@ -14,6 +14,7 @@ import { getDb } from '@/server/platform/db';
 import { createInteractionsService } from '@/server/modules/interactions';
 import { MeNav } from '@/components/me-nav';
 import { CreateFolderForm } from '@/components/create-folder-form';
+import { FolderActions } from '@/components/folder-actions';
 import { formatDateTime } from '@/packages/common/time';
 
 export const dynamic = 'force-dynamic';
@@ -110,6 +111,14 @@ export default async function FavoritesPage({
                         <div className="list-meta">
                           <span>{f.count} 个插件</span>
                           <span>创建于 {formatDateTime(f.createdAt)}</span>
+                          <span style={{ marginLeft: 'auto' }}>
+                            <FolderActions
+                              folderId={f.folderId}
+                              name={f.name}
+                              isDefault={f.isDefault}
+                              count={f.count}
+                            />
+                          </span>
                         </div>
                       </div>
                     </li>

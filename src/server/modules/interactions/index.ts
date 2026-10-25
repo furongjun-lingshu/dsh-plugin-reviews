@@ -505,6 +505,67 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
       }, injectedDb ?? db);
     },
 
+    /** 收藏夹改名（1-40 字，不能与自己的其它夹重名；默认夹也可改名）。 */
+    async renameFavoriteFolder(
+      ctx: CallerContext,
+      folderId: string,
+      name: string,
+      injectedDb?: SqliteDatabase,
+    ): Promise<{ folderId: string; name: string }> {
+      assertCanWrite(ctx);
+      const userId = ctx.userId;
+      const trimmed = typeof name === 'string' ? name.trim() : '';
+      if (trimmed.length === 0 || trimmed.length > 40) {
+        throw err.input('收藏夹名称需为 1-40 个字。', [{ path: 'name', message: '长度不合法' }]);
+      }
+      return withTransaction((tx) => {
+        const conn = tx.db;
+        const folder = conn
+          .prepare('SELECT id FROM favorite_folders WHERE id = ? AND user_id = ?')
+          .get(folderId, userId);
+        if (!folder) throw err.unavailable('收藏夹不存在或不可访问。');
+        const duplicate = conn
+          .prepare('SELECT 1 AS x FROM favorite_folders WHERE user_id = ? AND name = ? AND id <> ?')
+          .get(userId, trimmed, folderId);
+        if (duplicate) throw err.input('同名收藏夹已存在。', [{ path: 'name', message: '重名' }]);
+        conn
+          .prepare('UPDATE favorite_folders SET name = ?, updated_at = ? WHERE id = ?')
+          .run(trimmed, nowMs(), folderId);
+        return { folderId, name: trimmed };
+      }, injectedDb ?? db);
+    },
+
+    /**
+     * 删除收藏夹（默认夹不可删）。
+     *
+     * 夹内收藏**不删除、不静默丢失**：先移到默认收藏夹，再删夹。
+     */
+    async deleteFavoriteFolder(
+      ctx: CallerContext,
+      folderId: string,
+      injectedDb?: SqliteDatabase,
+    ): Promise<{ folderId: string; moved: number }> {
+      assertCanWrite(ctx);
+      const userId = ctx.userId;
+      return withTransaction((tx) => {
+        const conn = tx.db;
+        const folder = conn
+          .prepare('SELECT id, is_default FROM favorite_folders WHERE id = ? AND user_id = ?')
+          .get(folderId, userId) as { id: string; is_default: number } | undefined;
+        if (!folder) throw err.unavailable('收藏夹不存在或不可访问。');
+        if (folder.is_default === 1) {
+          throw err.input('默认收藏夹不能删除。', [{ path: 'folderId', message: '默认夹不可删' }]);
+        }
+
+        const defaultFolder = ensureDefaultFolderInTx(conn, userId);
+        const moved = conn
+          .prepare('UPDATE plugin_favorites SET folder_id = ? WHERE user_id = ? AND folder_id = ?')
+          .run(defaultFolder.id, userId, folderId).changes;
+        conn.prepare('DELETE FROM favorite_folders WHERE id = ? AND user_id = ?').run(folderId, userId);
+        return { folderId, moved };
+      }, injectedDb ?? db);
+    },
+
     /** 插件详情页用：当前用户是否已收藏。 */
     async isFavorite(ctx: CallerContext, pluginId: string, injectedDb?: SqliteDatabase): Promise<boolean> {
       if (ctx.userId === null) return false;
