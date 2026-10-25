@@ -538,13 +538,14 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
     /**
      * 删除收藏夹（默认夹不可删）。
      *
-     * 夹内收藏**不删除、不静默丢失**：先移到默认收藏夹，再删夹。
+     * 夹内收藏**一并取消收藏**（按用户要求：删除收藏夹 = 删除夹内插件收藏），
+     * 确认框必须提前写明这一点。
      */
     async deleteFavoriteFolder(
       ctx: CallerContext,
       folderId: string,
       injectedDb?: SqliteDatabase,
-    ): Promise<{ folderId: string; moved: number }> {
+    ): Promise<{ folderId: string; removed: number }> {
       assertCanWrite(ctx);
       const userId = ctx.userId;
       return withTransaction((tx) => {
@@ -557,12 +558,76 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
           throw err.input('默认收藏夹不能删除。', [{ path: 'folderId', message: '默认夹不可删' }]);
         }
 
-        const defaultFolder = ensureDefaultFolderInTx(conn, userId);
-        const moved = conn
-          .prepare('UPDATE plugin_favorites SET folder_id = ? WHERE user_id = ? AND folder_id = ?')
-          .run(defaultFolder.id, userId, folderId).changes;
+        // 先删夹内收藏（显式删除以便拿到计数；外键 CASCADE 也保证不会留下孤儿）。
+        const removed = conn
+          .prepare('DELETE FROM plugin_favorites WHERE user_id = ? AND folder_id = ?')
+          .run(userId, folderId).changes;
         conn.prepare('DELETE FROM favorite_folders WHERE id = ? AND user_id = ?').run(folderId, userId);
-        return { folderId, moved };
+        return { folderId, removed };
+      }, injectedDb ?? db);
+    },
+
+    /**
+     * 收藏夹内插件的批量操作：取消收藏 / 移动到另一个收藏夹。
+     *
+     * 只处理属于本人的收藏；有一项不属于本人则整批拒绝（不部分执行）。
+     */
+    async batchFavoriteAction(
+      ctx: CallerContext,
+      input: { action: 'remove' | 'move'; pluginIds: string[]; folderId?: string | null },
+      injectedDb?: SqliteDatabase,
+    ): Promise<{ affected: number }> {
+      assertCanWrite(ctx);
+      const userId = ctx.userId;
+      if (!Array.isArray(input.pluginIds) || input.pluginIds.length === 0) {
+        throw err.input('请选择要操作的插件。', [{ path: 'pluginIds', message: '至少一个' }]);
+      }
+      if (input.pluginIds.length > 200) {
+        throw err.input('一次最多操作 200 个插件。', [{ path: 'pluginIds', message: '超过上限' }]);
+      }
+      if (input.action !== 'remove' && input.action !== 'move') {
+        throw err.input('批量操作类型不合法。', [{ path: 'action', message: 'remove | move' }]);
+      }
+      const unique = [...new Set(input.pluginIds)];
+      return withTransaction((tx) => {
+        const conn = tx.db;
+        const placeholders = unique.map(() => '?').join(', ');
+        const owned = conn
+          .prepare(
+            `SELECT plugin_id FROM plugin_favorites
+              WHERE user_id = ? AND plugin_id IN (${placeholders})`,
+          )
+          .all(userId, ...unique) as Array<{ plugin_id: string }>;
+        if (owned.length !== unique.length) {
+          throw err.input('部分插件不在你的收藏里。', [{ path: 'pluginIds', message: '包含未收藏的插件' }]);
+        }
+
+        if (input.action === 'remove') {
+          const changed = conn
+            .prepare(
+              `DELETE FROM plugin_favorites
+                WHERE user_id = ? AND plugin_id IN (${placeholders})`,
+            )
+            .run(userId, ...unique).changes;
+          return { affected: changed };
+        }
+
+        const targetFolderId = input.folderId ?? null;
+        if (!targetFolderId) {
+          throw err.input('请选择目标收藏夹。', [{ path: 'folderId', message: '必填' }]);
+        }
+        const folder = conn
+          .prepare('SELECT id FROM favorite_folders WHERE id = ? AND user_id = ?')
+          .get(targetFolderId, userId);
+        if (!folder) throw err.input('目标收藏夹不存在。', [{ path: 'folderId', message: '未知收藏夹' }]);
+
+        const changed = conn
+          .prepare(
+            `UPDATE plugin_favorites SET folder_id = ?
+              WHERE user_id = ? AND plugin_id IN (${placeholders})`,
+          )
+          .run(targetFolderId, userId, ...unique).changes;
+        return { affected: changed };
       }, injectedDb ?? db);
     },
 

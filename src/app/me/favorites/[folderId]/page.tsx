@@ -12,7 +12,7 @@ import { currentContext } from '../../../api/_lib/context';
 import { getDb } from '@/server/platform/db';
 import { createInteractionsService } from '@/server/modules/interactions';
 import { MeNav } from '@/components/me-nav';
-import { formatDateTime } from '@/packages/common/time';
+import { FolderPluginList } from '@/components/folder-plugin-list';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +34,7 @@ export default async function FavoriteFolderPage({
   }
 
   const { folder, plugins } = data;
+  const folders = await service.listFavoriteFolders(ctx);
 
   return (
     <div>
@@ -61,23 +62,11 @@ export default async function FavoriteFolderPage({
                 这个收藏夹还是空的。去<Link href="/plugins">插件目录</Link>看看，在插件详情页点「☆ 收藏」。
               </p>
             ) : (
-              <ul className="item-list">
-                {plugins.map((f) => (
-                  <li key={f.pluginId} className="item">
-                    <div className="item-body">
-                      <h3>
-                        <Link href={`/plugins/${f.pluginId}`}>{f.displayName ?? f.repositoryFullName}</Link>
-                        {f.pluginPath !== '.' ? <span className="muted"> · {f.pluginPath}</span> : null}
-                      </h3>
-                      <div className="list-meta">
-                        <span>{f.repositoryFullName}</span>
-                        <span>收藏于 {formatDateTime(f.createdAt)}</span>
-                        {f.isArchived ? <span className="tag warn">已归档</span> : null}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <FolderPluginList
+                plugins={plugins}
+                folders={folders.map((f) => ({ folderId: f.folderId, name: f.name }))}
+                currentFolderId={folder.folderId}
+              />
             )}
           </section>
         </div>

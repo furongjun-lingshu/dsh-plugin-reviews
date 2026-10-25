@@ -50,7 +50,7 @@ export function FolderActions({
   const remove = async () => {
     const message =
       count > 0
-        ? `删除收藏夹「${name}」？夹内 ${count} 个插件会移到默认收藏夹。`
+        ? `删除收藏夹「${name}」？夹内 ${count} 个插件会一并取消收藏（不会移到其他收藏夹）。`
         : `删除收藏夹「${name}」？`;
     if (!window.confirm(message)) return;
     setBusy(true);
