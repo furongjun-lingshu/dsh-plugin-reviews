@@ -4,9 +4,7 @@
  * 「删除草稿」按钮（编辑器与「我的评测」列表共用）。
  *
  * 语义：DELETE /api/drafts?draftId=…
- *  - 已发布的评测：删除草稿时服务端在同一事务里撤回评测（本组件必须提前告知）；
- *  - 已提交但未发布：草稿软删除，保留提交与修订历史；
- *  - 从未提交：物理删除。
+ * 删除草稿**只删草稿**：不撤回、不影响已提交/已发布的评测。
  * 删除前必须二次确认——草稿正文不可恢复。
  */
 
@@ -19,18 +17,12 @@ export function DeleteDraftButton({
   redirectTo,
   className = 'link-btn',
   label = '删除草稿',
-  published = false,
-  withdrawn = false,
 }: {
   draftId: string;
   /** 删除成功后跳转到哪（编辑器用 /me；列表里不传，原地刷新）。 */
   redirectTo?: string;
   className?: string;
   label?: string;
-  /** 这篇评测是否已发布（删除会同时撤回）。 */
-  published?: boolean;
-  /** 是否已经撤回（用于确认文案）。 */
-  withdrawn?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -38,13 +30,11 @@ export function DeleteDraftButton({
 
   const onDelete = async () => {
     if (busy) return;
-    const message =
-      published && !withdrawn
-        ? '删除这份草稿会同时撤回已发布的评测（评测将不再公开）。删除后草稿不可恢复，继续？'
-        : withdrawn
-          ? '删除这份草稿？该评测已撤回，草稿删除后不可恢复。'
-          : '删除这份草稿？删除后不可恢复。';
-    if (!window.confirm(message)) return;
+    if (
+      !window.confirm('删除这份草稿？删除后草稿不可恢复；已发布的评测不会受影响。')
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

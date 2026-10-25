@@ -3,8 +3,8 @@
 /**
  * 「我的评测」草稿列表（客户端）：批量选择 + 批量删除 + 单删。
  *
- * 批量删除与单删语义一致：已发布的评测会在删除草稿时一并撤回；
- * 确认框必须提前说明这一点（用户明确要求「删除即撤回」）。
+ * 批量删除与单删语义一致：**只删草稿**，不撤回、不影响已提交/已发布评测。
+ * 提示文案必须与行为一致（此前的「删除即撤回」文案已过时）。
  */
 
 import { useMemo, useState } from 'react';
@@ -49,7 +49,7 @@ export function DraftList({ drafts }: { drafts: DraftListItem[] }) {
     if (busy || selected.size === 0) return;
     const message =
       selectedPublished > 0
-        ? `将删除 ${selectedCount} 份草稿；其中 ${selectedPublished} 篇已发布评测会同时撤回（不再公开）。删除后草稿不可恢复，继续？`
+        ? `将删除 ${selectedCount} 份草稿；其中 ${selectedPublished} 份关联的评测已发布，删除草稿不会撤回它们。删除后草稿不可恢复，继续？`
         : `将删除 ${selectedCount} 份草稿，删除后不可恢复，继续？`;
     if (!window.confirm(message)) return;
 
@@ -93,7 +93,7 @@ export function DraftList({ drafts }: { drafts: DraftListItem[] }) {
           {busy ? '删除中…' : `批量删除${selectedCount > 0 ? `（${selectedCount}）` : ''}`}
         </button>
         <span className="muted" style={{ fontSize: 13 }}>
-          删除已发布的草稿会同时撤回对应评测；确认框会写明。
+          删除草稿只移除草稿，不影响已发布的评测。
         </span>
       </div>
 
@@ -124,11 +124,7 @@ export function DraftList({ drafts }: { drafts: DraftListItem[] }) {
                   <span className="tag">{d.withdrawn ? '已发布 · 已撤回' : '已发布'}</span>
                 ) : null}
                 <span style={{ marginLeft: 'auto' }}>
-                  <DeleteDraftButton
-                    draftId={d.draftId}
-                    published={d.published}
-                    withdrawn={d.withdrawn}
-                  />
+                  <DeleteDraftButton draftId={d.draftId} />
                 </span>
               </div>
             </div>
