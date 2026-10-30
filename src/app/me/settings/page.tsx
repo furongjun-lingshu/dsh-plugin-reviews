@@ -19,6 +19,8 @@ import { BackLink } from '@/components/back-link';
 import { ProfileForm } from '@/components/profile-form';
 import { MeNav } from '@/components/me-nav';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { EditorAutosaveSetting } from '@/components/editor-autosave-setting';
+import { readPreferences } from '@/server/modules/preferences';
 import { formatDateTimeOr } from '@/packages/common/time';
 
 export const dynamic = 'force-dynamic';
@@ -70,6 +72,8 @@ export default async function MeSettingsPage() {
     .get(ctx.userId) as Row | undefined;
 
   const nickname = row?.nickname ?? '';
+  // 偏好读取失败不该让整页 500：设置页里已登录用户读到默认值即可（写回时会再校验）。
+  const preferences = readPreferences(getDb(), ctx.userId);
 
   return (
     <div>
@@ -114,6 +118,13 @@ export default async function MeSettingsPage() {
               <dt>上次登录</dt>
               <dd>{formatDateTimeOr(row?.last_login_at ?? null, '未知')}</dd>
             </dl>
+          </section>
+
+          <section className="panel" style={{ marginTop: 20 }}>
+            <div className="section-head">
+              <h2>编辑</h2>
+            </div>
+            <EditorAutosaveSetting initialSeconds={preferences.editorAutosaveSeconds} />
           </section>
 
           <section className="panel" style={{ marginTop: 20 }}>

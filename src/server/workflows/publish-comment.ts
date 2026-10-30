@@ -16,6 +16,7 @@
 
 import { withTransaction, type Tx } from '@/server/platform/tx';
 import { nowMs } from '@/server/platform/time';
+import { recordOperationInTx } from '@/server/modules/operations';
 import { log } from '@/server/platform/log';
 import type { SqliteDatabase } from '@/server/platform/db';
 import { getDb } from '@/server/platform/db';
@@ -56,6 +57,8 @@ interface SubmissionRow {
 export function publishComment(
   submissionId: string,
   db: SqliteDatabase = getDb(),
+  /** 触发这次发布的队列任务（写进审计的 task_id）。 */
+  options?: { taskId?: string | null },
 ): CommentPublishOutcome {
   return withTransaction((tx: Tx) => {
     const handle = tx.db;
@@ -148,6 +151,24 @@ export function publishComment(
     handle
       .prepare(`UPDATE content_submissions SET processing_state = 'published', state_version = state_version + 1, updated_at = ? WHERE id = ?`)
       .run(now, submissionId);
+
+    // 审计：评论公开同样是系统动作（worker 执行），与人工操作区分。
+    recordOperationInTx(
+      handle,
+      {
+        actionType: 'comment.publish',
+        operationKey: `comment_publish:${submissionId}`,
+        actorKind: 'system',
+        actorUserId: null,
+        targetType: 'comment',
+        targetId: comment.id,
+        targetSnapshot: { submission_id: submissionId, revision_id: revision.id, is_edit: isEdit },
+        changes: { published_revision_id: revision.id },
+        reason: isEdit ? '系统发布：编辑后的评论替换公开修订' : '系统发布：审核通过后由发布任务公开',
+        taskId: options?.taskId ?? null,
+      },
+      now,
+    );
 
     return {
       published: true,

@@ -10,6 +10,8 @@
 import { createMediaService, MEDIA_LIMITS } from '@/server/modules/media';
 import { getDb } from '@/server/platform/db';
 import { err } from '@/packages/common/errors';
+import { getDb as getDatabase } from '@/server/platform/db';
+import { numberSetting } from '@/server/modules/settings';
 import { currentContext, okJson, errorResponse, requestMeta } from '../../../_lib/context';
 
 export const runtime = 'nodejs';
@@ -61,7 +63,12 @@ export async function PUT(
   try {
     const { attachmentId } = await params;
     const ctx = await currentContext();
-    const bytes = await readBodyWithinLimit(request, MEDIA_LIMITS.maxBytes);
+    // 上限可后台调整（media.max_image_bytes），但永不超过内置硬上限：配置再大也不放开 10MB。
+    const maxBytes = Math.min(
+      numberSetting(getDatabase(), 'media.max_image_bytes', MEDIA_LIMITS.maxBytes),
+      MEDIA_LIMITS.maxBytes,
+    );
+    const bytes = await readBodyWithinLimit(request, maxBytes);
 
     // 用途与草稿由前端带上（封面图需要落到 draft_attachment_links）：缺省按正文图处理。
     const url = new URL(request.url);

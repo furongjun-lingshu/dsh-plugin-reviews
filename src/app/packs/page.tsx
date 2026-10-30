@@ -5,6 +5,7 @@
  */
 
 import Link from 'next/link';
+import { SearchGoButton } from '@/components/search-go-button';
 import { getDb } from '@/server/platform/db';
 import { createPacksService } from '@/server/modules/packs';
 import { formatDateTimeOr } from '@/packages/common/time';
@@ -62,9 +63,7 @@ export default async function PacksPage({
             aria-label="搜索整合包"
             maxLength={100}
           />
-          <button type="submit" className="search-go">
-            搜索
-          </button>
+          <SearchGoButton label="搜索整合包" />
         </form>
 
         {result.items.length === 0 ? (

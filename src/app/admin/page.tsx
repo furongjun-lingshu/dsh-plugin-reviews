@@ -249,6 +249,20 @@ export default async function AdminPage({
         执行——<strong>worker 没在跑，内容就不会公开</strong>。
       </p>
 
+      {/* 插件清单导入：批量收录入口（与「发现」互补：那个是搜出来的，这个是给定清单）。 */}
+      <section className="panel" style={{ marginTop: 24 }}>
+        <div className="section-head">
+          <h2>插件清单导入</h2>
+        </div>
+        <p className="muted" style={{ marginTop: 0 }}>
+          粘贴一份仓库清单（一行一链接或 CSV），逐条跑收录检查；支持先「预演」不入库。
+          与每日自动发现共用上游请求预算，跑不完的留到下一轮。
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          <Link href="/admin/imports">前往插件清单导入 →</Link>
+        </p>
+      </section>
+
       {/* 操作记录入口：审计表一直"只写不读"，给它一个查询页面。 */}
       <section className="panel" style={{ marginTop: 24 }}>
         <div className="section-head">

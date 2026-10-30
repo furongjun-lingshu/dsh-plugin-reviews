@@ -35,11 +35,16 @@ export interface SettingDefinition {
 /**
  * 可调参数清单（**只列真的被读取的**：列了却没人读，就是"有表无事"的翻版）。
  *
- * 目前接上的：
- *   * 两条频控（规格第 22-25 行）—— 键名与 `RATE_LIMIT_RULES[].specKey` 逐字一致；
- *   * 自动发现的两项（每轮上限、每日开关）。
- * 尚未接上的（如实记在这里，别让人以为改了就生效）：媒体限额（单张大小 / 每篇张数）、
- * 草稿自动保存间隔、内容筛查开关 —— 见 docs/HANDOFF.md。
+ * 目前接上的（12 项，代码里真的读它）：
+ *   * 频控四项 —— 键名与 `RATE_LIMIT_RULES[].specKey` 逐字一致；
+ *   * 自动发现两项（每轮上限、每日开关）；
+ *   * 媒体两项（单张字节上限、每篇张数）—— 只能调低、不能突破内置硬上限；
+ *   * Markdown 导入上限、首页两个栏目条数、安装核验有效期。
+ * 尚未接上的（如实记在这里，别让人以为改了就生效）：内容筛查开关、搜索权重、
+ * GitHub 请求预算 —— 见 docs/HANDOFF.md。
+ *
+ * 草稿自动保存间隔不走这里：它是**每用户**偏好（迁移 0030 `user_preferences`），
+ * 不是全站配置。
  */
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
   {
@@ -92,6 +97,67 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     min: 1,
     max: 200,
     unit: '个/轮',
+  },
+  {
+    key: 'media.max_image_bytes',
+    label: '单张图片大小上限',
+    description: '上传图片的字节上限。只能调到内置硬上限（10MB）以下——再大不是"可配置"，是换个方式拖垮磁盘。',
+    kind: 'integer',
+    defaultValue: 10 * 1024 * 1024,
+    min: 256 * 1024,
+    max: 10 * 1024 * 1024,
+    unit: '字节',
+  },
+  {
+    key: 'media.max_images_per_review',
+    label: '每篇评测图片上限',
+    description: '一篇评测（含封面）最多几张图片。与单张大小一起决定"一篇最多占多少空间"。',
+    kind: 'integer',
+    defaultValue: 20,
+    min: 1,
+    max: 20,
+    unit: '张',
+  },
+  {
+    key: 'imports.max_markdown_bytes',
+    label: '单份 Markdown 导入上限',
+    description: '「导入 Markdown」与批量导入时，单个 .md 文件的最大字节数。超限逐篇提示，不影响同批其它文件。',
+    kind: 'integer',
+    defaultValue: 512 * 1024,
+    min: 16 * 1024,
+    max: 2 * 1024 * 1024,
+    unit: '字节',
+  },
+  {
+    key: 'home.latest_review_count',
+    label: '首页最新评测条数',
+    description: '首页「最新评测」栏目的条数。',
+    kind: 'integer',
+    defaultValue: 6,
+    min: 1,
+    max: 20,
+    unit: '条',
+  },
+  {
+    key: 'home.recent_plugin_count',
+    label: '首页近期更新插件条数',
+    description: '首页「近期更新插件」栏目的条数。',
+    kind: 'integer',
+    defaultValue: 12,
+    min: 1,
+    max: 30,
+    unit: '条',
+  },
+  {
+    key: 'catalog.install_check_validity_seconds',
+    label: '安装核验有效期',
+    description:
+      '一次成功的安装核验多久内仍算"已核验通过"。过期后详情页显示「待复查」，不冒充仍然有效。',
+    kind: 'integer',
+    defaultValue: 86400,
+    min: 3600,
+    max: 30 * 86400,
+    unit: '秒',
   },
   {
     key: 'discovery.daily_enabled',
@@ -191,6 +257,22 @@ export function effectiveSettings(db: SqliteDatabase): SettingsReadModel {
 
   const unknownKeys = [...stored.keys()].filter((k) => !SETTING_BY_KEY.has(k)).sort();
   return { effective, definitions: SETTING_DEFINITIONS, unknownKeys, overriddenKeys };
+}
+
+/**
+ * 读一个整数配置（带定义范围钳制与兜底）。
+ *
+ * 供业务模块直接使用：模块只关心"当前生效值是多少"，不需要自己 merge 默认值或
+ * 处理"库里被人手改成越界值"的情况 —— 那两件事在这里一次做完。
+ */
+export function numberSetting(db: SqliteDatabase, key: string, fallback: number): number {
+  const def = SETTING_BY_KEY.get(key);
+  const raw = effectiveSettings(db).effective[key];
+  const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : (def?.defaultValue ?? fallback);
+  if (typeof value !== 'number') return fallback;
+  const min = def?.min ?? Number.NEGATIVE_INFINITY;
+  const max = def?.max ?? Number.POSITIVE_INFINITY;
+  return Math.min(Math.max(Math.floor(value), min), max);
 }
 
 export function createSettingsService(deps: { db: SqliteDatabase }): SettingsService {

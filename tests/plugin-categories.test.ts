@@ -192,6 +192,35 @@ describe('用途分类：后台维护', () => {
     expect(await service.deleteCategory(admin, 'zztools', db)).toEqual({ deleted: false });
   });
 
+  it('同一毫秒内连续维护同一分类：审计键不撞（曾把合法操作变成 500）', async () => {
+    ctx = createTestDb();
+    const db = ctx.db;
+    const service = createCatalogService({ db });
+    const admin = adminCaller(db);
+
+    // 冻结时间，逼出"同一毫秒"的场景：删两次同名分类、连续两次 upsert。
+    const realNow = Date.now;
+    Date.now = () => 1_700_000_000_000;
+    try {
+      await service.upsertCategory(admin, { slug: 'zzdup', label: '撞键测试', topics: ['zzdup'] }, db);
+      await service.upsertCategory(
+        admin,
+        { slug: 'zzdup', label: '撞键测试', topics: ['zzdup', 'zzdup2'] },
+        db,
+      );
+      expect(await service.deleteCategory(admin, 'zzdup', db)).toEqual({ deleted: true });
+      // 第二次删同一分类：返回 deleted:false，而不是抛 request_key_reused
+      expect(await service.deleteCategory(admin, 'zzdup', db)).toEqual({ deleted: false });
+    } finally {
+      Date.now = realNow;
+    }
+
+    const rows = db
+      .prepare("SELECT COUNT(*) AS c FROM operation_records WHERE action_type IN ('category.upsert','category.delete')")
+      .get() as { c: number };
+    expect(rows.c).toBe(4);
+  });
+
   it('校验：非法 slug / 空 topics / 保留值 / 重名 / 非管理员 都被拒绝', async () => {
     ctx = createTestDb();
     const db = ctx.db;

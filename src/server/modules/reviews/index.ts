@@ -13,6 +13,7 @@ import { assertCanWrite, type CallerContext } from '@/server/platform/context';
 import { nowMs } from '@/server/platform/time';
 import { newId } from '@/server/platform/id';
 import { withRead, withTransaction } from '@/server/platform/tx';
+import { recordOperationInTx } from '@/server/modules/operations';
 import { digest } from '@/server/platform/digest';
 import type { SqliteDatabase } from '@/server/platform/db';
 import { err } from '@/packages/common/errors';
@@ -78,6 +79,11 @@ export interface DraftView {
   reviewId: string;
   ownerId: string;
   pluginId: string | null;
+  /**
+   * 插件展示名（清单名优先，缺则仓库全名 + 子路径）；未绑定为 null。
+   * 编辑器要给人看"这篇评测对应哪个插件"，只给 UUID 等于没给。
+   */
+  pluginLabel: string | null;
   payload: DraftPayload;
   payloadSchemaVersion: number;
   saveVersion: number;
@@ -217,12 +223,13 @@ function readDraftRow(db: SqliteDatabase, draftId: string): DraftRow {
   return row;
 }
 
-function toDraftView(row: DraftRow, pluginId: string | null): DraftView {
+function toDraftView(row: DraftRow, pluginId: string | null, pluginLabel: string | null = null): DraftView {
   return {
     draftId: row.id,
     reviewId: row.review_id ?? '',
     ownerId: row.owner_id,
     pluginId,
+    pluginLabel,
     payload: parseJson<DraftPayload>(row.payload),
     payloadSchemaVersion: row.payload_schema_version,
     saveVersion: row.save_version,
@@ -241,6 +248,22 @@ function readReviewPluginId(db: SqliteDatabase, reviewId: string | null): string
     | { plugin_id: string | null }
     | undefined;
   return row?.plugin_id ?? null;
+}
+
+/** 插件展示名：与插件目录同一口径（清单名优先，缺则仓库全名 + 子路径）。 */
+export function pluginDisplayLabel(db: SqliteDatabase, pluginId: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT p.display_name, p.plugin_path, r.full_name
+         FROM plugins p
+         JOIN repositories r ON r.id = p.repository_id
+        WHERE p.id = ?`,
+    )
+    .get(pluginId) as { display_name: string | null; plugin_path: string; full_name: string } | undefined;
+  if (!row) return null;
+  const base = row.display_name ?? row.full_name;
+  const subPath = row.plugin_path && row.plugin_path !== '.' ? ` / ${row.plugin_path}` : '';
+  return `${base}${subPath}`;
 }
 
 function parseJson<T>(text: string): T {
@@ -378,6 +401,24 @@ function deleteDraftInTx(
   conn.prepare('DELETE FROM draft_save_receipts WHERE draft_id = ?').run(id);
   conn.prepare('DELETE FROM draft_attachment_links WHERE draft_id = ?').run(id);
 
+  // 审计：草稿删除（含批量与"撤回并删草稿"）都经过这里，一处记录即覆盖所有入口。
+  // operationKey 用草稿 id：同一份草稿只会被删一次（软删除后不再命中）。
+  recordOperationInTx(
+    conn,
+    {
+      actionType: 'draft.delete',
+      operationKey: `draft_delete:${id}`,
+      actorKind: 'user',
+      actorUserId: userId,
+      targetType: 'draft',
+      targetId: id,
+      targetSnapshot: { review_id: row.review_id, submitted: submitted !== undefined },
+      changes: { mode: submitted ? 'soft' : 'hard' },
+      reason: '作者删除草稿',
+    },
+    nowMs(),
+  );
+
   if (submitted) {
     // 软删除：保留 content_submissions / review_revisions；唯一索引已改为只约束未删除草稿。
     conn.prepare('UPDATE content_drafts SET deleted_at = ? WHERE id = ?').run(nowMs(), id);
@@ -406,7 +447,16 @@ export const reviewsService = {
    */
   async createOrGetDraft(
     ctx: CallerContext,
-    input: { pluginId: string | null; requestKey: string },
+    input: {
+      pluginId: string | null;
+      requestKey: string;
+      /**
+       * true = 每次都要一份**新的**草稿，不复用"同作者 + 同插件"的进行中草稿。
+       * 批量/文件夹导入必须用这个开关：否则同一批的多篇无插件草稿会全部落到同一份上，
+       * 后一篇覆盖前一篇正文（而且看起来"成功生成了 N 篇"，实际只有 1 篇）。
+       */
+      fresh?: boolean;
+    },
     db?: SqliteDatabase,
   ): Promise<{ draftId: string; reviewId: string; saveVersion: number }> {
     const userId = requireActiveUser(ctx);
@@ -424,8 +474,11 @@ export const reviewsService = {
         if (!plugin) throw err.input('所选插件不存在。', [{ path: 'plugin_id', message: '未知插件' }]);
       }
 
-      // 复用：同一作者、同一插件关联的已有草稿即为“进行中的那篇评测”。
-      const existing = db
+      // 复用：同一作者、同一插件关联的已有草稿即为"进行中的那篇评测"。
+      // fresh=true 时不复用（导入场景每篇必须是独立文章）。
+      const existing = input.fresh === true
+        ? undefined
+        : (db
         .prepare(
           `SELECT d.id AS draft_id, d.review_id AS review_id, d.save_version AS save_version
            FROM content_drafts d
@@ -434,7 +487,7 @@ export const reviewsService = {
            ORDER BY d.saved_at DESC, d.id DESC
            LIMIT 1`,
         )
-        .get(userId, pluginId) as { draft_id: string; review_id: string; save_version: number } | undefined;
+        .get(userId, pluginId) as { draft_id: string; review_id: string; save_version: number } | undefined);
 
       if (existing) {
         // 同一 (draftId, requestKey) 的重复请求不产生新草稿，直接返回当前版本。
@@ -488,7 +541,60 @@ export const reviewsService = {
       const row = readDraftRow(conn, id);
       if (row.draft_type !== 'review') throw err.unavailable('草稿不存在或已不可访问。');
       if (row.owner_id !== userId) throw err.forbidden('只能访问自己的草稿。');
-      return toDraftView(row, readReviewPluginId(conn, row.review_id));
+      const pluginId = readReviewPluginId(conn, row.review_id);
+      return toDraftView(row, pluginId, pluginId === null ? null : pluginDisplayLabel(conn, pluginId));
+    }, db);
+  },
+
+  /**
+   * 给草稿指定 / 更换「对应的插件」。
+   *
+   * 为什么要有这个动作：插件关联的**权威位置在 `reviews.plugin_id`**（草稿不缓存，避免两个真相）。
+   * 此前只能在**创建草稿时**给一次，于是批量导入出来的草稿永远绑不上插件——作者只能把正文
+   * 复制粘贴到"从插件页新建"的草稿里重来一遍。这里补上"改绑"这条路径。
+   *
+   * 只动 `reviews.plugin_id`，**不动 payload**：payload 被 `draft_save_receipts` 的摘要
+   * 引用着（重放判定要逐字节比对），在保存流程之外改它会让历史回执失效。
+   * 编辑器下次保存时会把 payload.pluginId 一起写对（PUT 的 body.pluginId 来自本方法的结果）。
+   */
+  async setDraftPlugin(
+    ctx: CallerContext,
+    input: { draftId: string; pluginId: string },
+    db?: SqliteDatabase,
+  ): Promise<{ draftId: string; pluginId: string; pluginLabel: string | null }> {
+    const userId = requireActiveUser(ctx);
+    const draftId = parseDraftId(input.draftId);
+    if (!isUuidV7(input.pluginId)) {
+      throw err.input('插件标识格式不正确。', [{ path: 'plugin_id', message: '必须是规范 UUIDv7' }]);
+    }
+
+    return withTransaction((tx) => {
+      const conn = tx.db;
+      const row = readDraftRow(conn, draftId);
+      if (row.draft_type !== 'review') throw err.unavailable('草稿不存在或已不可访问。');
+      if (row.owner_id !== userId) throw err.forbidden('只能修改自己的草稿。');
+      if (!row.review_id) throw err.unavailable('草稿没有关联的评测文章。');
+
+      const plugin = conn.prepare('SELECT id FROM plugins WHERE id = ?').get(input.pluginId) as
+        | { id: string }
+        | undefined;
+      if (!plugin) throw err.input('所选插件不存在。', [{ path: 'plugin_id', message: '未知插件' }]);
+
+      // 草稿一旦提交就软删除（保留提交/修订历史）。改绑一份已提交的草稿等于在改历史对应的文章，
+      // 明确拒绝，而不是悄悄改掉。
+      const state = conn.prepare('SELECT deleted_at FROM content_drafts WHERE id = ?').get(draftId) as
+        | { deleted_at: number | null }
+        | undefined;
+      if (!state || state.deleted_at !== null) {
+        throw err.unavailable('这份草稿已提交或已删除，不能再更换插件。');
+      }
+
+      conn.prepare('UPDATE reviews SET plugin_id = ? WHERE id = ?').run(input.pluginId, row.review_id);
+      return {
+        draftId,
+        pluginId: input.pluginId,
+        pluginLabel: pluginDisplayLabel(conn, input.pluginId),
+      };
     }, db);
   },
 

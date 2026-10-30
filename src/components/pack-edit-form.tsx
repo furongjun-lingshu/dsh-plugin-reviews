@@ -11,10 +11,18 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation';
 import { ApiError, ErrorNotice } from './api-client';
 import type { ReleaseInput } from '@/server/modules/packs';
+import { DEFAULT_AUTOSAVE_SECONDS } from '@/packages/common/autosave';
 
-const AUTOSAVE_DELAY_MS = 5000;
-
-export function PackEditForm({ releaseId, initial }: { releaseId: string; initial: ReleaseInput }) {
+export function PackEditForm({
+  releaseId,
+  initial,
+  /** 自动保存间隔（秒，0 = 关闭）：服务端读每用户偏好后传入（迁移 0030）。 */
+  initialAutosaveSeconds = DEFAULT_AUTOSAVE_SECONDS,
+}: {
+  releaseId: string;
+  initial: ReleaseInput;
+  initialAutosaveSeconds?: number;
+}) {
   const router = useRouter();
   const [title, setTitle] = useState(initial.title);
   const [purpose, setPurpose] = useState(initial.purpose);
@@ -31,6 +39,8 @@ export function PackEditForm({ releaseId, initial }: { releaseId: string; initia
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 自动保存静默期（毫秒，0 = 关闭）；来源是个人设置里的偏好。 */
+  const autosaveMs = initialAutosaveSeconds * 1000;
 
   const buildPayload = useCallback(
     (): ReleaseInput => ({
@@ -84,17 +94,18 @@ export function PackEditForm({ releaseId, initial }: { releaseId: string; initia
     setSaveState('idle');
   };
 
-  // 停止编辑 5 秒自动保存
+  // 停止编辑一段时间后自动保存（间隔来自个人设置；0 = 关闭）。
   useEffect(() => {
     if (!dirty) return;
+    if (autosaveMs <= 0) return;
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
       void save();
-    }, AUTOSAVE_DELAY_MS);
+    }, autosaveMs);
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [dirty, save]);
+  }, [dirty, save, autosaveMs]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

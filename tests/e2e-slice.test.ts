@@ -234,6 +234,17 @@ describe('端到端：登录 → 收录插件 → 写评测 → 提交 → 审�
     expect(outcome.published).toBe(true);
     expect(outcome.revisionId).toBe(submission.reviewRevisionId);
 
+    // 发布是系统动作：审计里必须能查到，且与人工操作区分（actor_kind=system、无 actor_user_id）。
+    const publishAudit = db
+      .prepare(
+        "SELECT actor_kind, actor_user_id, target_id, reason FROM operation_records WHERE action_type = 'review.publish'",
+      )
+      .get() as { actor_kind: string; actor_user_id: string | null; target_id: string; reason: string };
+    expect(publishAudit.actor_kind).toBe('system');
+    expect(publishAudit.actor_user_id).toBeNull();
+    expect(publishAudit.target_id).toBe(submission.reviewId);
+    expect(publishAudit.reason).toContain('系统发布');
+
     expect(
       (db.prepare('SELECT published_revision_id FROM reviews WHERE id = ?').get(submission.reviewId) as {
         published_revision_id: string;

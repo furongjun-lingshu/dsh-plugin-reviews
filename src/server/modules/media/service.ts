@@ -16,6 +16,7 @@ import { withRead, withTransaction, type Tx } from '@/server/platform/tx';
 import { nowMs } from '@/server/platform/time';
 import { newId } from '@/server/platform/id';
 import { err } from '@/packages/common/errors';
+import { numberSetting } from '@/server/modules/settings';
 import type { CallerContext } from '@/server/platform/context';
 import { assertCanWrite } from '@/server/platform/context';
 import {
@@ -323,8 +324,13 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
             )
             .get(input.draftId, userId) as { c: number }
         ).c;
-        if (used >= MEDIA_LIMITS.maxPerReview) {
-          throw err.input(`每篇评测最多 ${MEDIA_LIMITS.maxPerReview} 张图片（含封面），当前已有 ${used} 张。`, [
+        // 上限可后台调整（media.max_images_per_review），但永不超过内置硬上限。
+        const maxPerReview = Math.min(
+          numberSetting(db, 'media.max_images_per_review', MEDIA_LIMITS.maxPerReview),
+          MEDIA_LIMITS.maxPerReview,
+        );
+        if (used >= maxPerReview) {
+          throw err.input(`每篇评测最多 ${maxPerReview} 张图片（含封面），当前已有 ${used} 张。`, [
             { path: 'usage', message: '超出每篇图片数量限制' },
           ]);
         }

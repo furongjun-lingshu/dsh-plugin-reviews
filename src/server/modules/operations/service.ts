@@ -158,6 +158,21 @@ function recordWithin(
   return { operationId: id, replayed: false };
 }
 
+/**
+ * 在**已有事务内**写一条审计记录（同步）。
+ *
+ * 为什么需要它：`createOperationsService().record()` 是 async 接口，在同步事务回调里不能 await；
+ * 而"审计必须与业务变更同事务"（架构 §6.4）这条不能破。给事务内的调用方一个同步入口，
+ * 比让每个模块各自内联一份 INSERT 更能保证不变量只写一遍。
+ */
+export function recordOperationInTx(
+  handle: SqliteDatabase,
+  input: Omit<OperationRecordInput, 'tx'>,
+  now: number = nowMs(),
+): { operationId: string; replayed: boolean } {
+  return recordWithin(handle, input, now);
+}
+
 export function createOperationsService(db: SqliteDatabase): OperationsService {
   return {
     async record(input) {

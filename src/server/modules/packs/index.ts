@@ -19,6 +19,7 @@ import { err } from '@/packages/common/errors';
 import { assertCanWrite, isAdmin, type CallerContext } from '@/server/platform/context';
 import { deliverModerationResultNotification } from '@/server/modules/notifications';
 import { verifyInstallTarget } from './verify';
+import { recordOperationInTx } from '@/server/modules/operations';
 import { createHash } from 'node:crypto';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { buildPage, type PageRequest, type PageResult } from '@/packages/common/result';
@@ -931,6 +932,22 @@ export function createPacksService(deps: { db?: SqliteDatabase } = {}) {
         const actorId = ctx.userId;
         if (!actorId) throw err.forbidden('只有管理员可以审核整合包。');
         const published = publishReleaseInTx(conn, releaseId);
+        // 审计：审核决定是管理员对内容做的判断，必须在操作记录里留痕（此前只发通知）。
+        recordOperationInTx(
+          conn,
+          {
+            actionType: 'pack.release.approve',
+            operationKey: `pack_approve:${releaseId}`,
+            actorKind: 'admin',
+            actorUserId: actorId,
+            targetType: 'pack_release',
+            targetId: releaseId,
+            targetSnapshot: { review_status: 'published', release_number: published.releaseNumber },
+            changes: { release_number: published.releaseNumber },
+            reason: '管理员审核通过并发布整合包版本',
+          },
+          nowMs(),
+        );
         const author = conn
           .prepare(
             `SELECT p.author_id FROM plugin_packs p
@@ -974,6 +991,21 @@ export function createPacksService(deps: { db?: SqliteDatabase } = {}) {
         conn
           .prepare(`UPDATE plugin_pack_releases SET review_status = 'rejected', review_note = ? WHERE id = ?`)
           .run((note ?? '').trim() || null, releaseId);
+        recordOperationInTx(
+          conn,
+          {
+            actionType: 'pack.release.reject',
+            operationKey: `pack_reject:${releaseId}:${newId()}`,
+            actorKind: 'admin',
+            actorUserId: actorId,
+            targetType: 'pack_release',
+            targetId: releaseId,
+            targetSnapshot: { review_status: 'rejected' },
+            changes: { review_note: (note ?? '').trim() || null },
+            reason: (note ?? '').trim() || '管理员拒绝整合包版本，未填写具体原因',
+          },
+          nowMs(),
+        );
         const author = conn
           .prepare(
             `SELECT p.author_id FROM plugin_packs p
@@ -1933,6 +1965,21 @@ export function createPacksService(deps: { db?: SqliteDatabase } = {}) {
                 WHERE id = ?`,
             )
             .run(trimmed || null, adminId, now, appealId);
+          recordOperationInTx(
+            conn,
+            {
+              actionType: 'pack.appeal.resolve',
+              operationKey: `pack_appeal:${appealId}`,
+              actorKind: 'admin',
+              actorUserId: adminId,
+              targetType: 'pack_appeal',
+              targetId: appealId,
+              targetSnapshot: { state: 'overturned', release_id: appeal.release_id },
+              changes: { release_number: published.releaseNumber, note: trimmed || null },
+              reason: trimmed || '管理员改判：申诉成立，版本已发布',
+            },
+            now,
+          );
           deliverModerationResultNotification(conn, {
             recipientId: appeal.author_id,
             actorId: adminId,
@@ -1951,6 +1998,21 @@ export function createPacksService(deps: { db?: SqliteDatabase } = {}) {
               WHERE id = ?`,
           )
           .run(trimmed, adminId, now, appealId);
+        recordOperationInTx(
+          conn,
+          {
+            actionType: 'pack.appeal.resolve',
+            operationKey: `pack_appeal:${appealId}`,
+            actorKind: 'admin',
+            actorUserId: adminId,
+            targetType: 'pack_appeal',
+            targetId: appealId,
+            targetSnapshot: { state: 'upheld', release_id: appeal.release_id },
+            changes: { note: trimmed },
+            reason: trimmed,
+          },
+          now,
+        );
         deliverModerationResultNotification(conn, {
           recipientId: appeal.author_id,
           actorId: adminId,

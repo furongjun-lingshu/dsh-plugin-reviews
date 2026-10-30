@@ -44,6 +44,7 @@ import { createGithubCatalogProbe } from '@/server/adapters/catalog/github-probe
 import { createGithubPluginDiscovery, type PluginDiscoveryPort } from '@/server/adapters/catalog/github-discovery';
 import type { CatalogProbe } from '@/server/modules/catalog/types';
 import { createPluginDiscoveryService, discoveryDailyKey, DISCOVERY_DEFAULTS } from '@/server/modules/catalog/discovery';
+import { recordOperationInTx } from '@/server/modules/operations';
 import type { HandlerResult, TaskHandler } from './main';
 import { basicScreenEnabled, createBasicContentScreen } from './content-screen';
 
@@ -187,7 +188,7 @@ function makeReviewPublishHandler(deps: HandlerDeps): TaskHandler {
       return terminal('submission_missing', '提交不存在，无法发布。');
     }
 
-    const outcome = publishReview(submissionId, db);
+    const outcome = publishReview(submissionId, db, { taskId: task.taskId });
 
     if (outcome.published) {
       log.info('评测已发布', {
@@ -243,7 +244,7 @@ function makeCommentPublishHandler(deps: HandlerDeps): TaskHandler {
       return terminal('submission_missing', '提交不存在，无法发布。');
     }
 
-    const outcome = publishComment(submissionId, db);
+    const outcome = publishComment(submissionId, db, { taskId: task.taskId });
 
     if (outcome.published) {
       log.info('评论已发布', {
@@ -312,6 +313,42 @@ function makePluginDiscoveryHandler(deps: HandlerDeps): TaskHandler {
         maxPlugins: readNumEither('max_plugins', 'maxPlugins'),
         maxRequests: readNumEither('max_requests', 'maxRequests'),
       });
+      // 审计：自动发现是系统动作，管理员在操作记录里要能看到"这一轮扫了什么、收了多少"。
+      // 写失败**不能**让任务变成 error（发现本身已经成功），所以单独 try。
+      try {
+        recordOperationInTx(
+          deps.db,
+          {
+            actionType: 'plugin.discovery.run',
+            // 每轮一个键：同一个任务重试是两次真实运行，各自留一条（不比"去重"更假）。
+            operationKey: `discovery:${task.taskId}:${nowMs()}`,
+            actorKind: 'system',
+            actorUserId: null,
+            targetType: 'catalog',
+            targetId: runKey,
+            targetSnapshot: {
+              query: summary.query,
+              searched_repos: summary.searchedRepos,
+              truncated: summary.truncated,
+            },
+            changes: {
+              created: summary.created,
+              refreshed: summary.refreshed,
+              accepted: summary.accepted,
+              skipped: summary.skipped.length,
+              requests_used: summary.requestsUsed,
+            },
+            reason: '系统任务：插件目录自动发现',
+            taskId: task.taskId,
+          },
+          nowMs(),
+        );
+      } catch (e) {
+        log.warn('自动发现审计写入失败', {
+          task_id: task.taskId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
       return { outcome: 'success', progress: summary };
     } catch (e) {
       const code = isDomainError(e) ? e.code : 'discovery_failed';

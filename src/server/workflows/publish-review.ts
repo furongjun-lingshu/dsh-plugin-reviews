@@ -8,6 +8,7 @@
  */
 
 import { withTransaction, type Tx } from '@/server/platform/tx';
+import { recordOperationInTx } from '@/server/modules/operations';
 import { nowMs } from '@/server/platform/time';
 import type { SqliteDatabase } from '@/server/platform/db';
 import { getDb } from '@/server/platform/db';
@@ -65,6 +66,8 @@ interface EntityRow {
 export function publishReview(
   submissionId: string,
   db: SqliteDatabase = getDb(),
+  /** 触发这次发布的队列任务（写进审计的 task_id，便于从操作记录回到任务）。 */
+  options?: { taskId?: string | null },
 ): PublishOutcome {
   return withTransaction((tx: Tx) => {
     const handle = tx.db;
@@ -140,6 +143,26 @@ export function publishReview(
     // 少一边就会出现"搜得到但打不开"或"发布了却搜不到"。撤回/隐藏不删索引 ——
     // 检索层会逐行调 resolveVisibilityInTx，旧索引行不会泄露已下线的内容。
     reindexReviewInTx(handle, review.id);
+
+    // 审计：发布是**系统动作**（worker 执行），不是某个人点的按钮。
+    // actor_kind='system' 且 actor_user_id 为空；task_id 指回队列任务。
+    // 这样"这篇是谁发的/为什么发"在 /admin/operations 里能查到，且与人工操作区分得开。
+    recordOperationInTx(
+      handle,
+      {
+        actionType: 'review.publish',
+        operationKey: `review_publish:${submissionId}`,
+        actorKind: 'system',
+        actorUserId: null,
+        targetType: 'content_entity',
+        targetId: review.id,
+        targetSnapshot: { submission_id: submissionId, revision_id: revision.id },
+        changes: { published_revision_id: revision.id },
+        reason: '系统发布：审核通过后由发布任务公开',
+        taskId: options?.taskId ?? null,
+      },
+      now,
+    );
 
     return {
       published: true,

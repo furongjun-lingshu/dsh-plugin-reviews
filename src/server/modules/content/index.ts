@@ -15,6 +15,7 @@ import { assertCanAdmin, assertCanWrite, type CallerContext } from '@/server/pla
 import { nowMs } from '@/server/platform/time';
 import { newId } from '@/server/platform/id';
 import { withRead, withTransaction } from '@/server/platform/tx';
+import { recordOperationInTx } from '@/server/modules/operations';
 import type { SqliteDatabase } from '@/server/platform/db';
 import { err } from '@/packages/common/errors';
 import { isUuidV7 } from '@/packages/common/field-rules';
@@ -228,8 +229,25 @@ export const contentService = {
       }
 
       // 撤回即失去公开资格：不清除 published_revision_id（历史仍在），
-      // 公开与否完全由 resolveVisibility 计算 —— 不另存“公开状态”字段。
-      void requestKey;
+      // 公开与否完全由 resolveVisibility 计算 —— 不另存"公开状态"字段。
+      //
+      // 审计：撤回是作者对自己内容的处置，后台也该能回答"这篇是谁什么时候撤的、为什么"。
+      // 与管理员 hide/unhide 分属不同动作名，便于按动作筛选时区分"作者撤回"与"被隐藏"。
+      recordOperationInTx(
+        conn,
+        {
+          actionType: 'content.withdraw',
+          operationKey: requestKey,
+          actorKind: 'user',
+          actorUserId: userId,
+          targetType: 'content_entity',
+          targetId: reviewId,
+          targetSnapshot: { withdrawn_at: now, visibility_control_version: input.expectedControlVersion + 1 },
+          changes: { withdrawn: true, reason },
+          reason,
+        },
+        now,
+      );
       return { withdrawnAt: now };
     }, db);
   },
@@ -266,7 +284,24 @@ export const contentService = {
         });
       }
 
-      void requestKey;
+      // 审计：隐藏是"谁在什么时候因为什么把什么下线"，必须能查。
+      // 此前 hide/unhide 只写业务列、不写 operation_records，管理员在后台查不到这类动作。
+      // operationKey 直接用请求的 requestKey —— 同一次操作重试不会记两条。
+      recordOperationInTx(
+        conn,
+        {
+          actionType: 'content.hide',
+          operationKey: requestKey,
+          actorKind: 'admin',
+          actorUserId: adminId,
+          targetType: 'content_entity',
+          targetId: entityId,
+          targetSnapshot: { hidden_at: now, hidden_by: adminId, visibility_control_version: row.visibility_control_version + 1 },
+          changes: { hidden: true },
+          reason,
+        },
+        now,
+      );
       return { hiddenAt: now };
     }, db);
   },
@@ -277,7 +312,7 @@ export const contentService = {
     input: { entityId: string; reason: string; requestKey: string },
     db?: SqliteDatabase,
   ): Promise<{ hiddenAt: null }> {
-    requireAdmin(ctx);
+    const adminId = requireAdmin(ctx);
     const entityId = parseEntityId(input.entityId);
     const reason = parseReason(input.reason, 'reason');
     const requestKey = parseRequestKey(input.requestKey);
@@ -306,9 +341,23 @@ export const contentService = {
         });
       }
 
-      // 解除隐藏只是恢复“可公开”，并不等于恢复公开：撤回状态仍独立生效。
+      // 解除隐藏只是恢复"可公开"，并不等于恢复公开：撤回状态仍独立生效。
+      recordOperationInTx(
+        conn,
+        {
+          actionType: 'content.unhide',
+          operationKey: requestKey,
+          actorKind: 'admin',
+          actorUserId: adminId,
+          targetType: 'content_entity',
+          targetId: entityId,
+          targetSnapshot: { hidden_at: row.hidden_at, visibility_control_version: row.visibility_control_version + 1 },
+          changes: { hidden: false },
+          reason,
+        },
+        nowMs(),
+      );
       void reason;
-      void requestKey;
       return { hiddenAt: null };
     }, db);
   },

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getDb } from '@/server/platform/db';
+import { readPreferences } from '@/server/modules/preferences';
 import { currentContext } from '../../../../../api/_lib/context';
 import { PackEditForm } from '@/components/pack-edit-form';
 import type { ReleaseInput } from '@/server/modules/packs';
@@ -93,7 +94,11 @@ export default async function EditPackReleasePage({
       <p style={{ marginTop: 0 }}>
         <Link href="/me/packs">← 返回我的整合包</Link>
       </p>
-      <PackEditForm releaseId={releaseId} initial={initial} />
+      <PackEditForm
+        releaseId={releaseId}
+        initial={initial}
+        initialAutosaveSeconds={readPreferences(db, ctx.userId).editorAutosaveSeconds}
+      />
     </div>
   );
 }

@@ -11,6 +11,7 @@
  */
 
 import Link from 'next/link';
+import { SearchGoButton } from '@/components/search-go-button';
 import { getDb } from '@/server/platform/db';
 import { createSearchService, type SearchSource, type ReviewSearchRow } from '@/server/modules/search';
 import { createCatalogService, UNCATEGORIZED_CATEGORY } from '@/server/modules/catalog';
@@ -126,7 +127,7 @@ export default async function ReviewsPage({
             aria-label="搜整合包测评标题"
             maxLength={100}
           />
-          <button type="submit" className="search-go">搜索</button>
+          <SearchGoButton label="搜整合包测评标题" />
         </form>
         <section className="panel">
           <div className="section-head">

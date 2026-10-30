@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createTestDb, insertPlugin, insertRepository, insertUser, type TestDb } from './support/db';
 import { createPacksService } from '../src/server/modules/packs';
 import { createInteractionsService } from '../src/server/modules/interactions';
+import { resolveVisibilityInTx } from '../src/server/modules/content';
 import type { CallerContext } from '../src/server/platform/context';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { ErrorCodes, isDomainError } from '../src/packages/common/errors';
@@ -113,5 +114,81 @@ describe('整合包互动', () => {
       expect(isDomainError(e)).toBe(true);
       if (isDomainError(e)) expect(e.code).toBe(ErrorCodes.TARGET_UNAVAILABLE);
     }
+  });
+
+  it('举报隐藏：pack_release 落 content_entities，版本不再公开，举报人与作者都收到通知', async () => {
+    ctx = createTestDb();
+    const db = ctx.db;
+    const author = insertUser(db, { nickname: '作者' });
+    const reporter = insertUser(db, { nickname: '举报人' });
+    const admin = insertUser(db, { role: 'admin', nickname: '管理员' });
+    const { packId, releaseId } = await makePublished(db, author);
+    const interactions = createInteractionsService({ db });
+    const packs = createPacksService({ db });
+
+    expect((await packs.listPublicPacks({}, db)).total).toBe(1);
+
+    const report = await interactions.createReport(
+      caller(db, reporter),
+      { targetKind: 'pack_release', targetId: releaseId, reason: 'abuse', detail: '版本里带了可疑脚本' },
+      db,
+    );
+
+    const handled = await interactions.handleReport(
+      caller(db, admin),
+      report.reportId,
+      { action: 'hide', reason: '版本内含可疑脚本' },
+      db,
+    );
+    expect(handled).toEqual({ reportId: report.reportId, state: 'resolved', action: 'hide', notified: 2 });
+
+    // 1) 三件套落到 content_entities —— pack_release 的 content_entity 就是版本本身
+    expect(resolveVisibilityInTx(db, releaseId)).toMatchObject({
+      hidden: true,
+      withdrawn: false,
+      publiclyVisible: false,
+    });
+    const row = db
+      .prepare(
+        `SELECT hidden_at, hidden_by, hidden_reason, visibility_control_version
+           FROM content_entities WHERE id = ?`,
+      )
+      .get(releaseId) as {
+      hidden_at: number | null;
+      hidden_by: string | null;
+      hidden_reason: string | null;
+      visibility_control_version: number;
+    };
+    expect(row.hidden_at).not.toBeNull();
+    expect(row.hidden_by).toBe(admin);
+    expect(row.hidden_reason).toContain('版本内含可疑脚本');
+    expect(row.visibility_control_version).toBe(1);
+
+    // 2) 公开列表不再返回该包（隐藏而非删除：包与版本行仍在）
+    const list = await packs.listPublicPacks({}, db);
+    expect(list.total).toBe(0);
+    expect(list.items).toHaveLength(0);
+    expect(db.prepare('SELECT 1 AS x FROM plugin_packs WHERE id = ?').get(packId)).toBeDefined();
+
+    // 3) 举报人收到处理结果、作者收到隐藏通知（两条 moderation_result）
+    const notesOf = (userId: string) =>
+      db
+        .prepare(
+          `SELECT kind, detail, content_entity_id FROM notifications
+            WHERE recipient_id = ? ORDER BY created_at ASC, id ASC`,
+        )
+        .all(userId) as Array<{ kind: string; detail: string; content_entity_id: string }>;
+
+    const reporterNotes = notesOf(reporter);
+    expect(reporterNotes).toHaveLength(1);
+    expect(reporterNotes[0].kind).toBe('moderation_result');
+    expect(reporterNotes[0].content_entity_id).toBe(releaseId);
+    expect(reporterNotes[0].detail).toBe('你的举报已处理：整合包版本已隐藏。原因：版本内含可疑脚本');
+
+    const authorNotes = notesOf(author);
+    expect(authorNotes).toHaveLength(1);
+    expect(authorNotes[0].kind).toBe('moderation_result');
+    expect(authorNotes[0].content_entity_id).toBe(releaseId);
+    expect(authorNotes[0].detail).toContain('你发布的整合包版本已被管理员隐藏');
   });
 });

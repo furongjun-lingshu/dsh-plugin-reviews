@@ -7,6 +7,7 @@ export {
   operationsService,
   resetOperationsService,
   operationDigest,
+  recordOperationInTx,
 } from './service';
 
 export type { OperationsService, OperationRecordInput } from './service';

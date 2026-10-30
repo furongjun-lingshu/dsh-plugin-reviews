@@ -9,16 +9,17 @@
  */
 
 import Link from 'next/link';
+import { SearchGoButton } from '@/components/search-go-button';
 import { HomeFeed } from '@/components/home-feed';
 import { getDb } from '@/server/platform/db';
+import { numberSetting } from '@/server/modules/settings';
 import { resolveVisibilityInTx } from '@/server/modules/content';
 import { createCatalogService } from '@/server/modules/catalog';
 import { formatDateTimeOr } from '@/packages/common/time';
 
 export const dynamic = 'force-dynamic';
 
-/** 首页每个栏目只展示 10 条。 */
-const HOME_LIMIT = 10;
+/** 栏目条数可后台调整（home.latest_review_count / home.recent_plugin_count）。 */
 
 interface Row {
   review_id: string;
@@ -65,9 +66,13 @@ function categoryHref(slug: string | null): string {
 }
 
 export default async function HomePage() {
-  const reviews = latestPublicReviews(HOME_LIMIT);
-  const catalog = createCatalogService({ db: getDb() });
-  const recentPlugins = await catalog.listPlugins({ page: 1, page_size: HOME_LIMIT });
+  const db = getDb();
+  const reviews = latestPublicReviews(numberSetting(db, 'home.latest_review_count', 6));
+  const catalog = createCatalogService({ db });
+  const recentPlugins = await catalog.listPlugins({
+    page: 1,
+    page_size: numberSetting(db, 'home.recent_plugin_count', 12),
+  });
   // 页面 chip 行用**分类**（中文、按不同仓库计数），不再直接暴露原始 topics
   const categories = await catalog.listCategories();
 
@@ -85,22 +90,7 @@ export default async function HomePage() {
             placeholder="搜插件名、作者仓库或简介"
             aria-label="搜索插件"
           />
-          {/* 搜索动作简化成一个放大镜图标按钮（主人要求）：与输入框同一行，不再换行占两行 */}
-          <button type="submit" className="search-go" aria-label="搜索">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <circle cx="11" cy="11" r="7" />
-              <line x1="16.5" y1="16.5" x2="21" y2="21" />
-            </svg>
-          </button>
+          <SearchGoButton label="搜索" />
         </form>
 
         {/* 分类为空（还没收录）时整行不渲染 */}

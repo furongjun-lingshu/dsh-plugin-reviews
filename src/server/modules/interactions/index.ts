@@ -22,6 +22,7 @@ import { err } from '@/packages/common/errors';
 import { assertCanWrite, isAdmin, type CallerContext } from '@/server/platform/context';
 import { resolveVisibilityInTx } from '@/server/modules/content';
 import { deliverModerationResultNotification } from '@/server/modules/notifications';
+import { recordOperationInTx } from '@/server/modules/operations';
 
 export type ReportTargetKind = 'review' | 'comment' | 'pack_release';
 export type ReportReason = 'spam' | 'abuse' | 'misinformation' | 'copyright' | 'other';
@@ -900,7 +901,11 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
         // ---- 真正隐藏目标 ----
         let authorId: string | null = null;
         if (input.action === 'hide') {
-          if (report.target_kind === 'review') {
+          // review 与 pack_release 共用这一支：两者的被隐藏对象都是 content_entities 行。
+          // **pack_release 的 content_entity 就是版本本身**（plugin_pack_releases.id = content_entities.id，
+          // content_type = 'pack_release'），所以隐藏版本 = 隐藏这条 content_entities 行，
+          // 作者也直接从 content_entities.author_id 取，不需要再绕去 plugin_packs。
+          if (report.target_kind === 'review' || report.target_kind === 'pack_release') {
             authorId = (
               conn.prepare('SELECT author_id FROM content_entities WHERE id = ?').get(report.content_entity_id) as
                 | { author_id: string }
@@ -919,6 +924,23 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
                 )
                 .run(now, adminId, `举报处理：${reason}`, report.content_entity_id);
             }
+            // 审计：走举报通道的隐藏也要进操作记录（此前只写 report_handling_records，
+            // /admin/operations 里看不到"这次隐藏是举报触发的"）。
+            recordOperationInTx(
+              conn,
+              {
+                actionType: 'report.hide',
+                operationKey: `report_hide:${reportId}`,
+                actorKind: 'admin',
+                actorUserId: adminId,
+                targetType: 'content_entity',
+                targetId: report.content_entity_id,
+                targetSnapshot: { hidden_at: now, target_kind: report.target_kind },
+                changes: { report_id: reportId, hidden: true },
+                reason: `举报处理：${reason}`,
+              },
+              now,
+            );
           } else if (report.target_kind === 'comment' && report.comment_id !== null) {
             authorId = (
               conn.prepare('SELECT author_id FROM comments WHERE id = ?').get(report.comment_id) as
@@ -931,6 +953,21 @@ export function createInteractionsService(deps: { db: SqliteDatabase }) {
                   WHERE id = ? AND hidden_at IS NULL`,
               )
               .run(now, adminId, `举报处理：${reason}`, report.comment_id);
+            recordOperationInTx(
+              conn,
+              {
+                actionType: 'report.hide',
+                operationKey: `report_hide:${reportId}`,
+                actorKind: 'admin',
+                actorUserId: adminId,
+                targetType: 'comment',
+                targetId: report.comment_id,
+                targetSnapshot: { hidden_at: now },
+                changes: { report_id: reportId, hidden: true },
+                reason: `举报处理：${reason}`,
+              },
+              now,
+            );
           }
         }
 

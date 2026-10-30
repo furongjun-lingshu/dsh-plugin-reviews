@@ -28,6 +28,7 @@ import { withRead, withTransaction } from '@/server/platform/tx';
 import { digest } from '@/server/platform/digest';
 import { newId } from '@/server/platform/id';
 import { err } from '@/packages/common/errors';
+import { recordOperationInTx } from '@/server/modules/operations';
 import { buildPage, type PageResult } from '@/packages/common/result';
 import type { AssessmentTier } from '@/packages/common/assessment';
 import { ROOT_PLUGIN_PATH, parseSubmissionUrl } from './parse-url';
@@ -1067,6 +1068,8 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
       injectedDb?: SqliteDatabase,
     ): Promise<PluginCategoryRecord> {
       if (!isAdmin(ctx)) throw err.forbidden('只有管理员可以维护用途分类。');
+      const adminId = ctx.userId;
+      if (!adminId) throw err.forbidden('只有管理员可以维护用途分类。');
       const slug = normalizeCategorySlug(input.slug);
       const label = normalizeCategoryLabel(input.label);
       const topics = normalizeCategoryTopics(input.topics);
@@ -1099,6 +1102,25 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
           )
           .run(slug, label, JSON.stringify(topics), sortOrder, isVisible ? 1 : 0, now, now);
 
+        // 审计：分类决定"插件出现在哪个 chip 下"，是线上展示的开关，管理员改动要能查。
+        recordOperationInTx(
+          conn,
+          {
+            actionType: 'category.upsert',
+            // 键必须**每次唯一**：用时间戳在同一毫秒内会撞（删除两次同名分类的用例就撞了），
+            // 撞了会按"同键不同摘要"判为 keyReused，把一次合法操作变成 500。
+            operationKey: `category_upsert:${slug}:${newId(now)}`,
+            actorKind: 'admin',
+            actorUserId: adminId,
+            targetType: 'plugin_category',
+            targetId: slug,
+            targetSnapshot: { slug, label, topics, sort_order: sortOrder, is_visible: isVisible },
+            changes: { label, topics, is_visible: isVisible },
+            reason: `维护用途分类：${label}`,
+          },
+          now,
+        );
+
         const row = conn
           .prepare('SELECT slug, label, topics, sort_order, is_visible, updated_at FROM plugin_categories WHERE slug = ?')
           .get(slug) as {
@@ -1130,9 +1152,27 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
     /** 删除分类（管理员）。看不见的分类同样可删（后台要能清理）。 */
     async deleteCategory(ctx: CallerContext, slug: string, injectedDb?: SqliteDatabase): Promise<{ deleted: boolean }> {
       if (!isAdmin(ctx)) throw err.forbidden('只有管理员可以维护用途分类。');
+      const adminId = ctx.userId;
+      if (!adminId) throw err.forbidden('只有管理员可以维护用途分类。');
       const normalized = normalizeCategorySlug(slug);
       const run = (conn: SqliteDatabase): { deleted: boolean } => {
+        const now = Date.now();
         const result = conn.prepare('DELETE FROM plugin_categories WHERE slug = ?').run(normalized);
+        recordOperationInTx(
+          conn,
+          {
+            actionType: 'category.delete',
+            operationKey: `category_delete:${normalized}:${newId(now)}`,
+            actorKind: 'admin',
+            actorUserId: adminId,
+            targetType: 'plugin_category',
+            targetId: normalized,
+            targetSnapshot: { slug: normalized },
+            changes: { deleted: result.changes > 0 },
+            reason: `删除用途分类：${normalized}`,
+          },
+          now,
+        );
         return { deleted: result.changes > 0 };
       };
       if (injectedDb) {

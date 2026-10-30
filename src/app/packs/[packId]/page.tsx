@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getDb } from '@/server/platform/db';
 import { createPacksService } from '@/server/modules/packs';
+import { numberSetting } from '@/server/modules/settings';
 import { createPackReviewsService } from '@/server/modules/pack-reviews';
 import { renderMarkdownToSafeHtml } from '@/server/platform/markdown';
 import { formatVersionLabel } from '@/packages/common/status-text';
@@ -60,11 +61,11 @@ export default async function PackDetailPage({
   const helpful = selected
     ? await packService.helpfulStateForRelease(selected.releaseId, ctx.userId)
     : { helpful: false, count: 0 };
-  const installChecks = new Map<number, { state: string; detail: string | null }>();
+  const installChecks = new Map<number, { state: string; detail: string | null; completedAt: number | null }>();
   if (selected) {
     const checkRows = getDb()
       .prepare(
-        `SELECT i.position, ic.state, ic.detail
+        `SELECT i.position, ic.state, ic.detail, ic.completed_at
            FROM plugin_install_checks ic
            JOIN plugin_pack_release_items i ON i.id = ic.release_item_id
           WHERE i.release_id = ?
@@ -73,12 +74,24 @@ export default async function PackDetailPage({
                WHERE x.release_item_id = ic.release_item_id
             )`,
       )
-      .all(selected.releaseId) as Array<{ position: number; state: string; detail: string | null }>;
+      .all(selected.releaseId) as Array<{
+        position: number;
+        state: string;
+        detail: string | null;
+        completed_at: number | null;
+      }>;
     for (const row of checkRows) {
-      installChecks.set(row.position, { state: row.state, detail: row.detail });
+      installChecks.set(row.position, {
+        state: row.state,
+        detail: row.detail,
+        completedAt: row.completed_at,
+      });
     }
   }
   const bodyHtml = selected ? renderMarkdownToSafeHtml(selected.bodyMarkdown) : '';
+  // 核验有效期：过期的"已核验通过"不能继续冒充仍然有效，显示「待复查」。
+  const checkValidityMs = numberSetting(getDb(), 'catalog.install_check_validity_seconds', 86400) * 1000;
+  const nowForChecks = Date.now();
 
   return (
     <div>
@@ -221,7 +234,11 @@ export default async function PackDetailPage({
                       安装核验：
                       {(() => {
                         const check = installChecks.get(item.position);
-                        if (check?.state === 'ok') return '已核验通过';
+                        if (check?.state === 'ok') {
+                          const expired =
+                            check.completedAt === null || nowForChecks - check.completedAt > checkValidityMs;
+                          return expired ? '待复查（核验已过期）' : '已核验通过';
+                        }
                         if (check?.state === 'failed') return `核验未通过（${check.detail ?? '目标不存在'}）`;
                         if (check?.state === 'pending') return '核验中';
                         return '待核实（缺少安装目标）';

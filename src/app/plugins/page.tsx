@@ -8,6 +8,7 @@
  */
 
 import Link from 'next/link';
+import { SearchGoButton } from '@/components/search-go-button';
 import { getDb } from '@/server/platform/db';
 import { createCatalogService } from '@/server/modules/catalog';
 import { UNCATEGORIZED_CATEGORY } from '@/server/modules/catalog/service';
@@ -268,22 +269,7 @@ export default async function PluginsPage({
               ) : null}
               {conditions.sort !== 'info' ? <input type="hidden" name="sort" value={conditions.sort} /> : null}
               {conditions.dir !== 'desc' ? <input type="hidden" name="dir" value={conditions.dir} /> : null}
-              <button type="submit" className="search-go" aria-label="搜索">
-                {/* 搜索动作简化成放大镜图标按钮（与首页同一形态），与输入框保持同一行 */}
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="11" cy="11" r="7" />
-                  <line x1="16.5" y1="16.5" x2="21" y2="21" />
-                </svg>
-              </button>
+              <SearchGoButton label="搜索" />
             </form>
 
             {/* 筛选 / 排序：都是链接，改条件回第一页（listHref 保证）。

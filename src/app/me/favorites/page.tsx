@@ -7,6 +7,7 @@
  */
 
 import Link from 'next/link';
+import { SearchGoButton } from '@/components/search-go-button';
 import { redirect } from 'next/navigation';
 import { isAuthenticated } from '@/server/platform/context';
 import { currentContext } from '../../api/_lib/context';
@@ -52,9 +53,7 @@ export default async function FavoritesPage({
               aria-label="按插件标题搜索"
               maxLength={100}
             />
-            <button type="submit" className="search-go">
-              搜索
-            </button>
+            <SearchGoButton label="按插件标题搜索" />
           </form>
 
           {q ? (

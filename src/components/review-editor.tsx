@@ -25,6 +25,7 @@ import {
 } from './api-client';
 import { VERDICTS, verdictDef, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
 import { ASSESSMENTS, type AssessmentLevel } from '@/packages/common/assessment';
+import { DEFAULT_AUTOSAVE_SECONDS } from '@/packages/common/autosave';
 
 type VersionValue = { kind: 'unknown' } | { kind: 'known'; value: string };
 
@@ -46,6 +47,8 @@ interface DraftView {
   reviewId: string;
   ownerId: string;
   pluginId: string | null;
+  /** 插件展示名（未绑定为 null）：编辑器要给人看"对应哪个插件"，只给 UUID 等于没给。 */
+  pluginLabel: string | null;
   payload: DraftPayload;
   payloadSchemaVersion: number;
   saveVersion: number;
@@ -88,9 +91,6 @@ interface PendingAttachment {
   state: AttachmentView['processingState'];
   reason: string | null;
 }
-
-/** 自动保存的静默期（毫秒）：停手 5 秒才写库，改动过程中不打扰。 */
-const AUTOSAVE_DELAY_MS = 5000;
 
 const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -171,7 +171,21 @@ function VersionField({
   );
 }
 
-export function ReviewEditor({ draftId }: { draftId: string }) {
+export function ReviewEditor({
+  draftId,
+  /**
+   * 自动保存间隔（秒，0 = 关闭）：由**服务端**读每用户偏好后传入（迁移 0030）。
+   * 刻意不在客户端 fetch：多一次请求就多一次"编辑器打开时先按默认值计时"的中间态，
+   * 组件测试也会因此多出一条与业务无关的网络调用。
+   */
+  initialAutosaveSeconds = DEFAULT_AUTOSAVE_SECONDS,
+  /** 单个 .md 导入上限（字节）：来自后台 imports.max_markdown_bytes，默认 512KB。 */
+  maxMarkdownBytes = 512 * 1024,
+}: {
+  draftId: string;
+  initialAutosaveSeconds?: number;
+  maxMarkdownBytes?: number;
+}) {
   const [draft, setDraft] = useState<DraftView | null>(null);
   const [title, setTitle] = useState('');
   const [bodyMarkdown, setBodyMarkdown] = useState('');
@@ -194,6 +208,8 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
   const [saveVersion, setSaveVersion] = useState(0);
   /** 自动保存状态：idle 无改动 / pending 有改动待保存 / saving 保存中 / saved 已存 / error 失败。 */
   const [autoState, setAutoState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+  /** 自动保存静默期（毫秒，0 = 关闭）。来源是**个人设置**里的偏好（迁移 0030）。 */
+  const autosaveMs = initialAutosaveSeconds * 1000;
   /** 上次成功保存的内容指纹：相同就不重复存（避免打开页面就无谓写库）。 */
   const lastSavedDigestRef = useRef<string | null>(null);
   /** 自动保存定时器与「正在保存」标志（避免定时器与手动保存重入）。 */
@@ -342,7 +358,12 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
    */
   useEffect(() => {
     if (draft === null) return;
+    // 关闭自动保存：只做基线记录，不排定时器（手动「保存」照常可用）。
     const digest = contentDigest();
+    if (autosaveMs <= 0) {
+      setAutoState(lastSavedDigestRef.current === digest ? 'saved' : 'idle');
+      return;
+    }
     if (lastSavedDigestRef.current === null) {
       // 首次载入：记下基线，但不写库。
       lastSavedDigestRef.current = digest;
@@ -388,7 +409,7 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
           savingRef.current = false;
         }
       })();
-    }, AUTOSAVE_DELAY_MS);
+    }, autosaveMs);
 
     return () => {
       if (autoTimerRef.current !== null) clearTimeout(autoTimerRef.current);
@@ -398,6 +419,7 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
     draft,
     draftId,
     saveVersion,
+    autosaveMs,
     contentDigest,
     title,
     bodyMarkdown,
@@ -591,12 +613,11 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
           400,
         );
       }
-      const maxBytes = 512 * 1024;
-      if (file.size > maxBytes) {
+      if (file.size > maxMarkdownBytes) {
         throw new ApiError(
           {
             code: 'input_invalid',
-            message: `Markdown 文件最大 512KB，当前 ${(file.size / 1024).toFixed(0)}KB。`,
+            message: `Markdown 文件最大 ${Math.floor(maxMarkdownBytes / 1024)}KB，当前 ${(file.size / 1024).toFixed(0)}KB。`,
           },
           400,
         );
@@ -663,8 +684,10 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
           className={autoState === 'error' ? 'muted' : 'muted'}
           style={{ color: autoState === 'error' ? 'var(--danger)' : undefined }}
         >
-          {autoState === 'idle'
-            ? '自动保存：停笔 5 秒后保存'
+          {autosaveMs <= 0
+            ? '自动保存已关闭（可在「个人设置 · 编辑」里开启）'
+            : autoState === 'idle'
+            ? `自动保存：停笔 ${Math.round(autosaveMs / 1000)} 秒后保存`
             : autoState === 'pending'
               ? '自动保存：等待写入…'
               : autoState === 'saving'
@@ -682,24 +705,27 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
       {draft ? (
         draft.pluginId ? (
           <p className="muted" style={{ fontSize: 14 }}>
-            关联插件：
+            对应插件：
             <Link href={`/plugins/${draft.pluginId}`} style={{ color: 'var(--accent)' }}>
-              {draft.pluginId}
+              {draft.pluginLabel ?? draft.pluginId}
+            </Link>
+            <Link
+              href={`/me/drafts/${draftId}/choose-plugin`}
+              style={{ marginLeft: 12 }}
+            >
+              更换插件
             </Link>
           </p>
         ) : (
-          <div
-            className="notice warn"
-            style={{
-              fontSize: 14,
-            }}
-          >
-            <strong>这份草稿还没有关联插件，无法提交审核。</strong>
+          <div className="notice warn" style={{ fontSize: 14 }}>
+            <strong>这份草稿还没有对应的插件，无法提交审核。</strong>
             <br />
-            请到插件目录打开对应插件，用那里的「写一篇评测」新建草稿（已保存的正文不会丢，可复制过去）。
-            <Link href="/plugins" style={{ color: 'var(--accent)', marginLeft: 8 }}>
-              去插件目录 →
-            </Link>
+            点下面的按钮选一个（可搜索）；选完自动回到这里，正文不受影响。
+            <div style={{ marginTop: 8 }}>
+              <Link href={`/me/drafts/${draftId}/choose-plugin`} className="button primary">
+                选择所对应的插件
+              </Link>
+            </div>
           </div>
         )
       ) : null}

@@ -879,6 +879,37 @@ button.button {
     color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
     box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
 }
+/* 文件选择按钮：`<label class="button">` 里塞一个 display:none 的 input。
+   全局 `label { display:block; margin-bottom:6px }` 会把 .button 的 inline-flex 压掉，
+   文字因此贴着上沿（实测"批量导入 .md"看起来向上偏移）。这里把 label.button 拉回按钮形态，
+   并确保隐藏的 input 不参与布局、禁用时整颗按钮变灰。 */
+label.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0;
+  cursor: pointer;
+  /* 文字居中：label 里的文本节点默认按行盒基线参与 flex 布局，
+     中文字体的 ascent/descent 与 latin 不同，视觉上会偏上一点点。
+     显式行高 + 子元素 span 归零行高，让文本盒正好垂直居中。 */
+  line-height: var(--control-height);
+}
+
+label.button > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: var(--md-sys-typescale-label-large-line);
+}
+
+label.button > input[type='file'] {
+  display: none;
+}
+
+label.button:has(input:disabled) {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
 .button:hover,
 button.button:hover {
   background: color-mix(
