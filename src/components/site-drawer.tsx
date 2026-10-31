@@ -18,6 +18,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { ThemeMenuRow } from './theme-switch';
 
 type GlyphName = 'review' | 'bell' | 'settings' | 'logout' | 'login' | 'menu' | 'close' | 'chevron';
 
@@ -255,6 +256,10 @@ export function SiteDrawer({
                 ) : null}
               </>
             )}
+
+            <div className="divider" />
+            <p className="menu-label">外观</p>
+            <ThemeMenuRow />
 
             <p className="menu-label">站点</p>
             <Link href="/spec" role="menuitem" className="menu-row" onClick={() => close()}>

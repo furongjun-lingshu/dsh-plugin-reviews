@@ -274,65 +274,37 @@
   --md-sys-elevation-level5: 0 4px 6px rgba(0, 0, 0, 0.6), 0 14px 32px rgba(0, 0, 0, 0.55);
 }
 
-/* 个人设置 · 外观：M3 switch（只影响主题，不触发任何业务逻辑） */
-.theme-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 4px 0;
-}
-.theme-row-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.theme-row-title {
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
-}
-.theme-row-desc {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.md-switch {
+/* 用户菜单 · 深色模式开关（账户下拉 / 登录下拉 / 手机抽屉共用） */
+.theme-menu-switch {
   position: relative;
   flex: 0 0 auto;
-  width: 52px;
-  height: 32px;
-  padding: 0;
-  border: none;
+  width: 44px;
+  height: 26px;
+  margin-left: auto;
   border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-sys-color-surface-container-highest);
-  cursor: pointer;
+  pointer-events: none;
   transition: background-color var(--md-sys-motion-duration-short4)
     var(--md-sys-motion-easing-standard);
 }
-.md-switch[aria-checked='true'] {
-  background: var(--md-sys-color-primary);
-}
-.md-switch-thumb {
+.theme-menu-switch .md-switch-thumb {
   position: absolute;
   top: 4px;
   left: 4px;
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--md-sys-color-outline);
   transition: transform var(--md-sys-motion-duration-short4)
       var(--md-sys-motion-easing-emphasized),
     background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
 }
-.md-switch[aria-checked='true'] .md-switch-thumb {
-  transform: translateX(20px);
-  background: var(--md-sys-color-on-primary);
+.theme-menu-switch.is-checked {
+  background: var(--md-sys-color-primary);
 }
-.md-switch:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.theme-menu-switch.is-checked .md-switch-thumb {
+  transform: translateX(18px);
+  background: var(--md-sys-color-on-primary);
 }
 
 /* ------------------------------------------------------------------- 基础 */
@@ -817,6 +789,29 @@ p {
       'side'
       'rail';
   }
+}
+
+/* 评测页标题：插件评测 → / 整合包评测 ←，点标题切换评测类型 */
+.reviews-switch-title {
+  margin-bottom: 16px;
+}
+.reviews-switch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+.reviews-switch-link:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+.reviews-switch-arrow {
+  color: var(--muted);
+  font-weight: 400;
+}
+.reviews-switch-link:hover .reviews-switch-arrow {
+  color: var(--accent);
 }
 
 /* 目录布局：左侧分类栏 + 右侧结果（页面布局.md §4） */
@@ -2078,26 +2073,6 @@ button:not(:disabled):active,
   border-color: var(--accent);
 }
 
-/* ---------------------------------------------------------- 页头主题切换 */
-/* 头像旁的小太阳 / 小月亮：只做外观，读写逻辑在 packages/common/theme.ts */
-.theme-switch {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-}
-.theme-switch:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 /* ---------------------------------------------------------- 页头账户下拉栏 */
 .account-menu {
   position: relative;
@@ -2615,16 +2590,25 @@ input[type='search']:focus {
 /* ------------------------------------------------- 顶栏（M3 small top app bar） */
 .site-header {
   height: var(--header-height);
-  /* 毛玻璃顶栏：半透明 surface + 背景模糊。滚动时正文从下面经过，
-     文字仍然清楚；浅色/深色都跟随主题 token。 */
+  background: transparent;
+  /* 让毛玻璃只存在于 ::before 背景层：backdrop-filter 若加在 header 本体上，
+     会给 fixed 的侧边抽屉创建 containing block，抽屉会被压成顶栏高度。 */
+  isolation: isolate;
+}
+.site-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: color-mix(in srgb, var(--md-sys-color-surface) 76%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   backdrop-filter: blur(18px) saturate(150%);
   border-bottom: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 40%, transparent);
+  pointer-events: none;
 }
 /* 不支持 backdrop-filter 的浏览器退回实色，保证可读 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .site-header {
+  .site-header::before {
     background: var(--md-sys-color-surface);
   }
 }

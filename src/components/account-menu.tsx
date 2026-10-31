@@ -16,6 +16,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { ThemeMenuRow } from './theme-switch';
 
 type GlyphName = 'review' | 'star' | 'bell' | 'settings' | 'logout' | 'close' | 'chevron';
 
@@ -208,6 +209,9 @@ export function AccountMenu({
             <span className="menu-row-label">个人设置</span>
             <Glyph name="chevron" />
           </Link>
+
+          <p className="menu-label">外观</p>
+          <ThemeMenuRow />
 
           <div className="divider" />
           <p className="menu-label">账户</p>

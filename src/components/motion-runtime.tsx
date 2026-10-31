@@ -18,11 +18,12 @@
 import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 
-/** 顶栏三个栏目在导航里的左右顺序：插件 → 评测 → 规范。 */
+/** 顶栏栏目在导航里的左右顺序：插件 → 整合包 → 评测 → 规范。 */
 function sectionIndex(pathname: string): number | null {
   if (pathname === '/plugins' || pathname.startsWith('/plugins/')) return 0;
-  if (pathname === '/reviews' || pathname.startsWith('/reviews/')) return 1;
-  if (pathname === '/spec' || pathname.startsWith('/spec/')) return 2;
+  if (pathname === '/packs' || pathname.startsWith('/packs/')) return 1;
+  if (pathname === '/reviews' || pathname.startsWith('/reviews/')) return 2;
+  if (pathname === '/spec' || pathname.startsWith('/spec/')) return 3;
   return null;
 }
 

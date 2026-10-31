@@ -1,10 +1,10 @@
 'use client';
 
 /**
- * 页头主题切换按钮：头像旁边的小太阳 / 小月亮。
+ * 用户菜单里的深色模式开关（账户下拉 / 登录下拉 / 手机侧边抽屉共用）。
  *
- * 亮色时显示太阳，暗色时显示月亮；点击立即切换并记住到 localStorage。
- * 与个人设置里的开关共用 `@/packages/common/theme` 的读写逻辑。
+ * 亮色显示太阳、深色显示月亮；点击立即切换并记住到 localStorage。
+ * 与设置页原来的开关共用 `@/packages/common/theme` 的读写逻辑。
  */
 
 import { useEffect, useState } from 'react';
@@ -34,27 +34,35 @@ function MoonIcon() {
   );
 }
 
-export function ThemeSwitch() {
+export function ThemeMenuRow() {
   const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
     setTheme(readTheme());
   }, []);
 
-  const next: Theme = theme === 'dark' ? 'light' : 'dark';
+  const dark = theme === 'dark';
 
   return (
     <button
       type="button"
-      className="theme-switch"
+      role="menuitemcheckbox"
+      aria-checked={dark}
+      className="menu-row theme-menu-row"
       onClick={() => {
+        const next: Theme = dark ? 'light' : 'dark';
         applyTheme(next);
         setTheme(next);
       }}
-      aria-label={theme === 'dark' ? '切换到亮色模式' : '切换到深色模式'}
-      title={theme === 'dark' ? '切换到亮色模式' : '切换到深色模式'}
     >
-      {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
+      {dark ? <MoonIcon /> : <SunIcon />}
+      <span className="menu-row-label">深色模式</span>
+      <span
+        className={`md-switch theme-menu-switch${dark ? ' is-checked' : ''}`}
+        aria-hidden="true"
+      >
+        <span className="md-switch-thumb" />
+      </span>
     </button>
   );
 }

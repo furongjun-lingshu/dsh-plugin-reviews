@@ -18,7 +18,6 @@ import { currentContext } from '../../api/_lib/context';
 import { BackLink } from '@/components/back-link';
 import { ProfileForm } from '@/components/profile-form';
 import { MeNav } from '@/components/me-nav';
-import { ThemeToggle } from '@/components/theme-toggle';
 import { formatDateTimeOr } from '@/packages/common/time';
 
 export const dynamic = 'force-dynamic';
@@ -47,12 +46,6 @@ export default async function MeSettingsPage() {
             <p className="muted" style={{ marginTop: 0 }}>
               需要先登录。请使用页面顶部的登录入口。
             </p>
-            <section className="panel" style={{ marginTop: 16 }}>
-              <div className="section-head">
-                <h2>外观</h2>
-              </div>
-              <ThemeToggle />
-            </section>
           </div>
         </div>
       </div>
@@ -114,13 +107,6 @@ export default async function MeSettingsPage() {
               <dt>上次登录</dt>
               <dd>{formatDateTimeOr(row?.last_login_at ?? null, '未知')}</dd>
             </dl>
-          </section>
-
-          <section className="panel" style={{ marginTop: 20 }}>
-            <div className="section-head">
-              <h2>外观</h2>
-            </div>
-            <ThemeToggle />
           </section>
         </div>
       </div>

@@ -51,6 +51,18 @@ const DESTINATIONS: Destination[] = [
     ),
   },
   {
+    href: '/packs',
+    label: '整合包',
+    match: ['/packs'],
+    icon: (
+      <svg {...STROKE}>
+        <path d="M21 8 12 3 3 8l9 5 9-5z" />
+        <path d="m3 12 9 5 9-5" />
+        <path d="m3 16 9 5 9-5" />
+      </svg>
+    ),
+  },
+  {
     href: '/reviews',
     label: '评测',
     match: ['/reviews'],

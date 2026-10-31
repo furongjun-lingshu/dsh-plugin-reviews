@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { ThemeMenuRow } from './theme-switch';
 
 export function SignInMenu({
   githubConfigured,
@@ -91,6 +92,10 @@ export function SignInMenu({
               </button>
             </>
           ) : null}
+
+          <div className="divider" />
+          <p className="menu-label">外观</p>
+          <ThemeMenuRow />
         </div>
       ) : null}
     </div>
