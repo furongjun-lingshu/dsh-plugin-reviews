@@ -88,7 +88,7 @@ export default async function PacksPage({
                     <span className="tag site">第 {pack.releaseNumber} 版</span>
                     <div className="item-main">
                       <h3 className="item-title">
-                        <Link href={`/packs/${pack.packId}`}>{pack.title}</Link>
+                        <Link href={`/packs/${pack.packId}`} prefetch={false}>{pack.title}</Link>
                       </h3>
                       <div className="list-meta">
                         <span className="truncate">{pack.purpose}</span>

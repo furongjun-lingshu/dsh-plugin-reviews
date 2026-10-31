@@ -11,7 +11,6 @@
 import Link from 'next/link';
 import { HomeFeed } from '@/components/home-feed';
 import { getDb } from '@/server/platform/db';
-import { resolveVisibilityInTx } from '@/server/modules/content';
 import { createCatalogService } from '@/server/modules/catalog';
 import { formatDateTimeOr } from '@/packages/common/time';
 
@@ -33,7 +32,9 @@ interface Row {
 
 function latestPublicReviews(limit: number): Row[] {
   const db = getDb();
-  const rows = db
+  // 公开资格直接下推到 SQL（published_revision_id 非空 + 未撤回 + 未隐藏），
+  // 只取前 10 条；不要先读全表再逐行 resolveVisibility（35 条时是 70+ 次查询）。
+  return db
     .prepare(
       `SELECT r.id AS review_id, rev.title, r.plugin_id, ce.public_updated_at, r.source_kind,
               p.display_name AS plugin_display_name, p.plugin_path, repo.full_name AS repo_full_name
@@ -42,12 +43,14 @@ function latestPublicReviews(limit: number): Row[] {
          JOIN review_revisions rev ON rev.id = r.published_revision_id
          LEFT JOIN plugins p ON p.id = r.plugin_id
          LEFT JOIN repositories repo ON repo.id = p.repository_id
-        ORDER BY ce.public_updated_at DESC, r.id ASC`,
+        WHERE r.published_revision_id IS NOT NULL
+          AND rev.review_id = r.id
+          AND ce.withdrawn_at IS NULL
+          AND ce.hidden_at IS NULL
+        ORDER BY ce.public_updated_at DESC, r.id ASC
+        LIMIT ?`,
     )
-    .all() as Row[];
-  // 公开资格逐行核验，不另存公开状态字段。
-  const visible = rows.filter((row) => resolveVisibilityInTx(db, row.review_id).publiclyVisible);
-  return visible.slice(0, limit);
+    .all(limit) as Row[];
 }
 
 /** 评测对应的插件展示名：清单名优先（缺则仓库全名），子目录形态带上子路径；插件被删也不会崩（LEFT JOIN）。 */
@@ -107,11 +110,11 @@ export default async function HomePage() {
         {categories.length > 0 ? (
           <div className="filters" role="navigation" aria-label="按用途分类浏览" style={{ marginBottom: 0 }}>
             {/* 「用途分类」标签按主人要求去掉：这一排本来就是分类 chip，标题是多余的 */}
-            <Link href={categoryHref(null)} className="active">
+            <Link href={categoryHref(null)} className="active" prefetch={false}>
               全部
             </Link>
             {categories.slice(0, 10).map((c) => (
-              <Link key={c.slug} href={categoryHref(c.slug)}>
+              <Link key={c.slug} href={categoryHref(c.slug)} prefetch={false}>
                 {c.label} <span className="count">{c.repositoryCount}</span>
               </Link>
             ))}
@@ -144,13 +147,13 @@ export default async function HomePage() {
                       </span>
                       <div className="item-main">
                         <h3 className="item-title">
-                          <Link href={`/reviews/${r.review_id}`}>{r.title}</Link>
+                          <Link href={`/reviews/${r.review_id}`} prefetch={false}>{r.title}</Link>
                         </h3>
                         <div className="list-meta">
                           {pluginLabel(r) === null ? (
                             <span>插件信息不可用</span>
                           ) : (
-                            <Link href={`/plugins/${r.plugin_id}`} className="truncate">
+                            <Link href={`/plugins/${r.plugin_id}`} className="truncate" prefetch={false}>
                               {pluginLabel(r)}
                             </Link>
                           )}
@@ -187,7 +190,7 @@ export default async function HomePage() {
                   const initial = (p.displayName ?? p.repositoryFullName).slice(0, 1).toUpperCase();
                   return (
                     <li key={p.pluginId} className="item home-plugin-item">
-                      <Link href={`/plugins/${p.pluginId}`} className="home-plugin-card">
+                      <Link href={`/plugins/${p.pluginId}`} className="home-plugin-card" prefetch={false}>
                         <span className="icon">
                           {p.ownerAvatarUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element

@@ -17,6 +17,13 @@ import { BackToTop } from '@/components/back-to-top';
 import { BottomNav } from '@/components/bottom-nav';
 import './globals.css';
 
+/**
+ * 字体 CSS 异步加载：Google Fonts 是第三方请求，同步 stylesheet 会卡首屏。
+ * 先 media="print" 非阻塞拉取，加载完切回 all；字体本身仍 display=swap。
+ */
+const GOOGLE_FONTS_HREF =
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700;800&display=swap';
+
 export const metadata: Metadata = {
   // 站点标题与描述面向访问者，不再带"最小切片"这类项目内部说法。
   title: 'DSH 插件评测',
@@ -37,10 +44,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700;800&display=swap"
+        <link id="google-fonts" rel="stylesheet" href={GOOGLE_FONTS_HREF} media="print" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){var f=document.getElementById('google-fonts');if(!f)return;function on(){f.media='all';}if(f.sheet){on();}else{f.addEventListener('load',on,{once:true});}})();",
+          }}
         />
+        <noscript>
+          <link rel="stylesheet" href={GOOGLE_FONTS_HREF} />
+        </noscript>
       </head>
       <body>
         {/* 竹叶感背景装饰：固定底层，永远不挡点击（古风纸面肌理 + 轻量飘叶） */}

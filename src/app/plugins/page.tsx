@@ -124,7 +124,7 @@ function PluginCard({ plugin }: { plugin: PluginSummary }) {
 
       <div className="item-body">
         <h3 className="truncate">
-          <Link href={`/plugins/${plugin.pluginId}`}>{title}</Link>
+          <Link href={`/plugins/${plugin.pluginId}`} prefetch={false}>{title}</Link>
           {plugin.displayName ? <span className="muted"> · {label}</span> : null}
         </h3>
 
@@ -214,7 +214,7 @@ export default async function PluginsPage({
           <aside className="panel" aria-label="用途分类">
             <p className="side-title">用途分类</p>
             <nav className="side-nav">
-              <Link href={listHref(conditions, { cat: undefined })} className={conditions.cat ? '' : 'active'}>
+              <Link href={listHref(conditions, { cat: undefined })} className={conditions.cat ? '' : 'active'} prefetch={false}>
                 <span>全部</span>
               </Link>
               {categories.map((c) => (
@@ -222,6 +222,7 @@ export default async function PluginsPage({
                   key={c.slug}
                   href={listHref(conditions, { cat: c.slug })}
                   className={conditions.cat === c.slug ? 'active' : ''}
+                  prefetch={false}
                   title={
                     c.slug === UNCATEGORIZED_CATEGORY
                       ? '没有命中任何分类的插件（去后台补映射）'
@@ -297,6 +298,7 @@ export default async function PluginsPage({
                     key={v}
                     href={listHref(conditions, { hasReviews: v })}
                     className={conditions.hasReviews === v ? 'active' : ''}
+                    prefetch={false}
                   >
                     {v === 'all' ? '全部' : v === 'yes' ? '已有评测' : '暂无评测'}
                   </Link>
@@ -309,6 +311,7 @@ export default async function PluginsPage({
                     key={v}
                     href={listHref(conditions, { assessment: v })}
                     className={conditions.assessment === v ? 'active' : ''}
+                    prefetch={false}
                   >
                     {v === 'all' ? '全部' : v === 'quick' ? '已快测' : '已标测'}
                   </Link>
@@ -321,6 +324,7 @@ export default async function PluginsPage({
                     key={v}
                     href={listHref(conditions, { security: v })}
                     className={conditions.security === v ? 'active' : ''}
+                    prefetch={false}
                   >
                     {v === 'all' ? '全部' : v === 'yes' ? '已安全审计' : '未安全审计'}
                   </Link>
@@ -333,6 +337,7 @@ export default async function PluginsPage({
                     key={v}
                     href={listHref(conditions, { sort: v })}
                     className={conditions.sort === v ? 'active' : ''}
+                    prefetch={false}
                   >
                     {v === 'info' ? '按资料更新时间' : '按评测数'}
                   </Link>
@@ -342,6 +347,7 @@ export default async function PluginsPage({
                   className={conditions.dir === 'asc' ? 'active' : ''}
                   aria-label="按正序排序"
                   title="正序"
+                  prefetch={false}
                 >
                   ↑
                 </Link>
@@ -350,6 +356,7 @@ export default async function PluginsPage({
                   className={conditions.dir === 'desc' ? 'active' : ''}
                   aria-label="按逆序排序"
                   title="逆序"
+                  prefetch={false}
                 >
                   ↓
                 </Link>
