@@ -64,4 +64,14 @@ describe('桌面首页一屏', () => {
     expect(css).toMatch(/\.home-page \.home-feed \.home-more \{[^}]*margin-top: auto/);
     expect(css).toMatch(/\.home-page \.home-feed section \.item-list > \.item \{[^}]*flex: 1 1 auto/);
   });
+
+  it('后台条数上限与 CSS 分档上限一致（都是 12，调多了也显示不出来）', () => {
+    const settings = readFileSync(join(process.cwd(), 'src/server/modules/settings/index.ts'), 'utf8');
+    const cap = Math.max(...wideTiers.map((t) => t.limit));
+    for (const key of ['home.latest_review_count', 'home.recent_plugin_count']) {
+      const block = settings.slice(settings.indexOf(`key: '${key}'`));
+      const max = Number(/max: (\d+)/.exec(block)![1]);
+      expect(max, key).toBe(cap);
+    }
+  });
 });
