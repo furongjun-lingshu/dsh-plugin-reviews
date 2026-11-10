@@ -283,6 +283,9 @@ export function SiteDrawer({
             <Link href="/spec" role="menuitem" className="menu-row" onClick={() => close()}>
               {row('review', '测评规范')}
             </Link>
+            <Link href="/guide" role="menuitem" className="menu-row" onClick={() => close()}>
+              {row('review', '使用教程')}
+            </Link>
           </aside>
         </>
       ) : null}
