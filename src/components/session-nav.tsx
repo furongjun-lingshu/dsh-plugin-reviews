@@ -108,6 +108,7 @@ export function SessionNav() {
   const forumEnabled = session?.forumEnabled !== false;
   const inSpec = pathname === '/spec' || pathname.startsWith('/spec/');
   const inFeatured = pathname === '/featured' || pathname.startsWith('/featured/');
+  const inGuide = pathname === '/guide' || pathname.startsWith('/guide/');
 
   return (
     <div>
@@ -138,6 +139,9 @@ export function SessionNav() {
           ) : null}
           <Link href="/spec" className={inSpec ? 'active' : ''} aria-current={inSpec ? 'page' : undefined}>
             规范
+          </Link>
+          <Link href="/guide" className={inGuide ? 'active' : ''} aria-current={inGuide ? 'page' : undefined}>
+            教程
           </Link>
         </div>
 
