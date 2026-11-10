@@ -291,7 +291,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
           修订历史移到左栏（原来挂在正文末尾）。它挂在正文里时，读者要读完一整篇才看到"改过几次"；
           作为旁栏信息，随时可见。
         */}
-        <aside className="article-rail">
+        <aside className="article-rail" data-motion-panel>
           <RevisionHistory reviewId={reviewId} />
         </aside>
 
@@ -301,7 +301,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
           2. 标题层 —— 上移压住头图，形成"图在上、题浮出"的分层；
           3. 正文框 —— 正文被包进一张卡片里，与标题层分开，读起来边界清楚。
       */}
-      <article className="article-shell">
+      <article className="article-shell" data-motion-panel>
         {/*
           封面：作者选定的图（正文图或单独上传）。没有封面时不渲染任何占位图片，
           头图仍由 ArticleHero 生成——"缺省用插件图标占位"在这个版式里就是生成图。
@@ -386,7 +386,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
         <CommentSection contentId={reviewId} />
       </article>
 
-      <aside className="article-side">
+      <aside className="article-side" data-motion-panel>
         <div className="panel">
           <div className="section-head">
             <h2>版本与时间</h2>

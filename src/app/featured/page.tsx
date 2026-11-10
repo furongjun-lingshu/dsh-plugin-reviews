@@ -36,9 +36,9 @@ export default async function FeaturedListPage({
 
   return (
     <div>
+      {/* 标题右侧那句「编辑按主题挑选的插件专栏，每期一组」按主人要求删掉 */}
       <div className="section-head">
         <h1 style={{ margin: 0 }}>精选</h1>
-        <span className="muted">编辑按主题挑选的插件专栏，每期一组</span>
       </div>
 
       <p style={{ marginTop: 8 }}>

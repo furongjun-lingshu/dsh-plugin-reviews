@@ -49,8 +49,8 @@ export default async function PacksPage({
       <h1>整合包</h1>
 
       <div className="panel">
+        {/* 面板标题「公开整合包」按主人要求删掉：上面的 h1 已经是「整合包」，不重复 */}
         <div className="section-head">
-          <h2>公开整合包</h2>
           <span className="muted">共 {result.total} 个</span>
         </div>
 
@@ -67,17 +67,13 @@ export default async function PacksPage({
         </form>
 
         {result.items.length === 0 ? (
-          <p className="empty" style={{ marginBottom: 0 }}>
-            {query.q ? (
-              <>
-                没有匹配的整合包（换个关键词，或<Link href="/packs">清除筛选</Link>）。
-              </>
-            ) : (
-              <>
-                还没有公开整合包。登录后可以在「我的 → 整合包」里用收藏夹创建第一个。
-              </>
-            )}
-          </p>
+          // 没有整合包时什么都不说（主人要求删掉"还没有公开整合包…"那句），
+          // 只有"搜了没匹配"才需要一句解释。
+          query.q ? (
+            <p className="empty" style={{ marginBottom: 0 }}>
+              没有匹配的整合包（换个关键词，或<Link href="/packs">清除筛选</Link>）。
+            </p>
+          ) : null
         ) : (
           <ul className="item-list">
             {result.items.map((pack) => (

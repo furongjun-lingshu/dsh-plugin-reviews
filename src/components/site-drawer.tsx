@@ -25,6 +25,8 @@ type GlyphName =
   | 'bell'
   | 'settings'
   | 'feedback'
+  | 'star'
+  | 'forum'
   | 'logout'
   | 'login'
   | 'menu'
@@ -88,6 +90,20 @@ function Glyph({ name }: { name: GlyphName }) {
           <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.8-.8L3 21l1.9-4.9A8.4 8.4 0 0 1 3.6 11.5a8.4 8.4 0 0 1 9-8.4 8.4 8.4 0 0 1 8.4 8.4z" />
         </svg>
       );
+    case 'star':
+      return (
+        <svg {...common}>
+          <path d="M12 3.6l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.8l5.9-.9z" />
+        </svg>
+      );
+    case 'forum':
+      return (
+        <svg {...common}>
+          <path d="M20 15a3 3 0 0 1-3 3H8l-4 3V6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z" />
+          <line x1="8" y1="9" x2="16" y2="9" />
+          <line x1="8" y1="13" x2="13" y2="13" />
+        </svg>
+      );
     case 'logout':
       return (
         <svg {...common}>
@@ -122,6 +138,7 @@ export function SiteDrawer({
   authenticated,
   githubConfigured,
   testLoginEnabled,
+  forumEnabled,
   onSignOut,
   onTestLogin,
 }: {
@@ -133,6 +150,8 @@ export function SiteDrawer({
   authenticated: boolean;
   githubConfigured: boolean;
   testLoginEnabled: boolean;
+  /** 讨论区总开关关闭时不出现「讨论区」入口（关站期间 /forum 一律 404）。 */
+  forumEnabled: boolean;
   onSignOut: () => void;
   onTestLogin: () => void;
 }) {
@@ -280,6 +299,14 @@ export function SiteDrawer({
             <ThemeMenuRow />
 
             <p className="menu-label">站点</p>
+            <Link href="/featured" role="menuitem" className="menu-row" onClick={() => close()}>
+              {row('star', '精选')}
+            </Link>
+            {forumEnabled ? (
+              <Link href="/forum" role="menuitem" className="menu-row" onClick={() => close()}>
+                {row('forum', '讨论区')}
+              </Link>
+            ) : null}
             <Link href="/spec" role="menuitem" className="menu-row" onClick={() => close()}>
               {row('review', '测评规范')}
             </Link>

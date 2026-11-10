@@ -18,6 +18,7 @@ import { createCatalogService, UNCATEGORIZED_CATEGORY } from '@/server/modules/c
 import { createPackReviewsService } from '@/server/modules/pack-reviews';
 import { currentContext } from '@/app/api/_lib/context';
 import { PageJump } from '@/components/page-jump';
+import { ReviewsTabPanel, ReviewsTabSwitchLink } from '@/components/reviews-tab-switch';
 import { isPageOutOfRange } from '@/packages/common/pagination';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { formatDateTimeOr } from '@/packages/common/time';
@@ -111,13 +112,24 @@ export default async function ReviewsPage({
     const ctx = await currentContext();
     const packReviews = await createPackReviewsService({ db }).listPackReviews(ctx, q);
     return (
-      <div>
-        <h1 className="reviews-switch-title">
-          <Link href="/reviews" className="reviews-switch-link">
-            整合包评测
-            <span className="reviews-switch-arrow" aria-hidden="true">←</span>
-          </Link>
-        </h1>
+      <ReviewsTabPanel key="packs" tab="packs">
+        <header className="reviews-switch-head">
+          <h1 className="reviews-switch-title">
+            <ReviewsTabSwitchLink
+              href="/reviews"
+              label="整合包评测"
+              target="插件评测"
+              direction="back"
+            />
+          </h1>
+          <ReviewsTabSwitchLink
+            href="/reviews"
+            label="整合包评测"
+            target="插件评测"
+            direction="back"
+            variant="chip"
+          />
+        </header>
         <form action="/reviews" method="get" className="search" style={{ marginBottom: 12 }}>
           <input type="hidden" name="tab" value="packs" />
           <input
@@ -160,7 +172,7 @@ export default async function ReviewsPage({
             </ul>
           )}
         </section>
-      </div>
+      </ReviewsTabPanel>
     );
   }
 
@@ -219,13 +231,24 @@ export default async function ReviewsPage({
   );
 
   return (
-    <div>
-      <h1 className="reviews-switch-title">
-        <Link href="/reviews?tab=packs" className="reviews-switch-link">
-          插件评测
-          <span className="reviews-switch-arrow" aria-hidden="true">→</span>
-        </Link>
-      </h1>
+    <ReviewsTabPanel key="plugins" tab="plugins">
+      <header className="reviews-switch-head">
+        <h1 className="reviews-switch-title">
+          <ReviewsTabSwitchLink
+            href="/reviews?tab=packs"
+            label="插件评测"
+            target="整合包评测"
+            direction="fwd"
+          />
+        </h1>
+        <ReviewsTabSwitchLink
+          href="/reviews?tab=packs"
+          label="插件评测"
+          target="整合包评测"
+          direction="fwd"
+          variant="chip"
+        />
+      </header>
 
       <div className="catalog-layout">
         <aside className="panel" aria-label="筛选">
@@ -401,6 +424,6 @@ export default async function ReviewsPage({
           </div>
         </section>
       </div>
-    </div>
+    </ReviewsTabPanel>
   );
 }

@@ -201,6 +201,7 @@ export function SessionNav() {
               authenticated={session.authenticated === true}
               githubConfigured={session.githubLoginConfigured === true}
               testLoginEnabled={session.testLoginEnabled === true}
+              forumEnabled={forumEnabled}
               onSignOut={() => void signOut()}
               onTestLogin={() => void signInForTest()}
             />

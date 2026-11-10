@@ -202,21 +202,23 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
   {
     key: 'home.latest_review_count',
     label: '首页最新评测条数',
-    description: '首页「最新评测」栏目的条数。',
+    description:
+      '首页「最新评测」栏目的条数。桌面端要保证"一屏不滚动"，屏高不够时会少显示几条（见 globals.css 的分档）。',
     kind: 'integer',
-    defaultValue: 6,
+    defaultValue: 12,
     min: 1,
-    max: 20,
+    max: 24,
     unit: '条',
   },
   {
     key: 'home.recent_plugin_count',
     label: '首页近期更新插件条数',
-    description: '首页「近期更新插件」栏目的条数。',
+    description:
+      '首页「近期更新插件」栏目的条数。桌面端要保证"一屏不滚动"，屏高不够时会少显示几条（见 globals.css 的分档）。',
     kind: 'integer',
     defaultValue: 12,
     min: 1,
-    max: 30,
+    max: 24,
     unit: '条',
   },
   {
