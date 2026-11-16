@@ -22,6 +22,7 @@
 import { getDb } from '@/server/platform/db';
 import { createForumBoardService } from '@/server/modules/forum/boards';
 import { err } from '@/packages/common/errors';
+import { assertCanWrite, isAdmin } from '@/server/platform/context';
 import { currentContext, okJson, errorResponse, requestMeta, readJson, assertForumEnabled } from '../../../../_lib/context';
 
 export const runtime = 'nodejs';
@@ -44,10 +45,20 @@ export async function GET(request: Request, { params }: { params: Promise<{ boar
     // 讨论区关站时接口表现为不存在（与其它 forum 接口同一口径）
     assertForumEnabled();
     const ctx = await currentContext();
+    // 名单里含 user_id / 授予人，只给本区管理者与站方管理员看。
+    //
+    // 这条规则原本只写在注释里、代码没实现——匿名也能拿到整个任职名单（含谁任命的谁）。
+    // 现在按「本区管理者与站方管理员」落实：先挡匿名，再判是否为管理员或本区成员。
+    //
+    // 为什么不能像 POST 那样统一 assertCanAdmin：POST 的六个动作确实都只给
+    // owner / 站方管理员，但「看名单」区长与协管本就该能看——这是读，不是管。
+    assertCanWrite(ctx);
     const { boardId } = await params;
     const service = createForumBoardService({ db: getDb() });
-    // 名单里含 user_id / 授予人，只给本区管理者与站方管理员看
-    const role = await service.boardRoleOf(boardId, ctx.userId ?? '');
+    const role = await service.boardRoleOf(boardId, ctx.userId);
+    if (!isAdmin(ctx) && role === null) {
+      throw err.forbidden('只有本区管理者与站方管理员可以查看任职名单。');
+    }
     const members = await service.listMembers(ctx, boardId);
     return okJson({ boardId, myRole: role, members }, requestId);
   } catch (e) {
